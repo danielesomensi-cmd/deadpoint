@@ -13,7 +13,7 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const RUN = process.argv[2] || 'smoke';
 const VIEW = process.argv[3] || 'mobile';
 const OUT = path.resolve(process.argv[4] || path.join(ROOT, 'test', 'shots'));
-const DIST = path.join(ROOT, 'dist', 'index.html');
+const DIST = process.env.DIST ? path.resolve(process.env.DIST) : path.join(ROOT, 'dist', 'index.html');
 if (!fs.existsSync(DIST)) { console.error('dist/index.html missing: run `npm run build` first'); process.exit(1); }
 
 const server = http.createServer((req, res) => {
@@ -95,7 +95,12 @@ try {
   const frames = (n) => page.evaluate((n) => new Promise((r) => { let k = 0; const f = () => (++k >= n ? r() : requestAnimationFrame(f)); requestAnimationFrame(f); }), n);
   const wait = (js, opts = {}) => page.waitForFunction(js, null, { polling: 'raf', ...opts });
   fs.mkdirSync(OUT, { recursive: true });
-  const shot = (name) => page.screenshot({ path: path.join(OUT, `${VIEW}_${name}.png`) });
+  let shotCount = 0;
+  const MAX_SHOTS = Number(process.env.SHOTS || 99);
+  const shot = async (name) => {
+    await page.screenshot({ path: path.join(OUT, `${VIEW}_${name}.png`) });
+    if (++shotCount >= MAX_SHOTS) throw new Error('SHOTS_DONE');
+  };
   const freeze = (on) => ev(`window.__DP_FREEZE = ${on}`);
 
   const log = (m) => { if (process.env.VERBOSE) console.error('[e2e]', m); };
@@ -195,7 +200,8 @@ try {
     }
   }
 } catch (e) {
-  report.exception = String(e && e.message || e).split('\n')[0];
+  if (String(e && e.message).startsWith('SHOTS_DONE')) report.visual = 'partial-ok';
+  else report.exception = String(e && e.message || e).split('\n')[0];
 } finally {
   report.errors = errors.slice(0, 20);
   await browser.close();
