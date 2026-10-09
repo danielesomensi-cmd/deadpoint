@@ -157,6 +157,8 @@ try {
     await ev('__bot.schedule(__DP.simT)');
     await wait('__DP.attempt.state === "flight" && (__DP.simT - __DP.attempt.flight.t0) / __DP.attempt.flight.T > 0.6');
     await freeze(true); await shot('04_flight'); await freeze(false);
+    await wait('__DP.attempt.state === "flight" && (__DP.simT - __DP.attempt.flight.t0) / __DP.attempt.flight.T > 0.985');
+    await freeze(true); await shot('04b_deadpoint'); await freeze(false);
     await ev('__bot.sigma = 0.004; __bot.on = true; __bot.rest = false');
     await wait('__DP.attempt.moveIdx >= 1');
     await frames(8);

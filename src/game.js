@@ -58,6 +58,11 @@ export function startGame() {
   let shakeAmp = 0, fovPunch = 0;
   let W = 1, H = 1;
   let feetOff = false, feetBackAt = 0, topT0 = 0, fallEndAt = Infinity;
+  // timing aids: bottom meter, countdown beats, slow-motion while learning
+  let timeScale = 1;
+  let tutorialLeft = store.get('tutorial', 3); // good/perfect catches still needed before slow-mo stops
+  const meter = { src: null, last: null };
+  const beat = { key: -1, next: 0 };
   let timers = [];
   let fade = null;
   const demo = new Session({ board: BOARD_HOLDS, startGrade: 6, seed: 4242 });
@@ -122,7 +127,7 @@ export function startGame() {
         tA.copy(Hh);
         gripPos(mv.to, tB);
         // the hand decelerates into the hold: velocity ~0 exactly at the deadpoint (p = 1)
-        const e = p <= 1 ? 1 - Math.pow(1 - clamp(p, 0, 1), 2.2) : 1;
+        const e = p <= 1 ? 1 - Math.pow(1 - clamp(p, 0, 1), 1.6) : 1;
         arcPath(Hh, tA, tB, e, mv.dyno ? 0.1 : 0.14);
         if (p > 1) Hh.addScaledVector(g, (p - 1) * 0.9).addScaledVector(NRM, (p - 1) * 0.3);
         setHand(mv.hand, true);
@@ -148,7 +153,7 @@ export function startGame() {
         if (pm > 0) {
           tA.copy(Ho);
           gripPos(fin.to, tB); tB.x += other === 'L' ? -0.06 : 0.06;
-          const e = pm <= 1 ? 1 - Math.pow(1 - pm, 2.2) : 1;
+          const e = pm <= 1 ? 1 - Math.pow(1 - pm, 1.6) : 1;
           arcPath(Ho, tA, tB, e, 0.1);
           if (pm > 1) Ho.addScaledVector(g, (pm - 1) * 0.5);
           setHand(other, true);
@@ -347,6 +352,7 @@ export function startGame() {
           sfx.launch(e.mv.dyno, e.T);
           break;
         case 'catch': {
+          noteTiming(e.off, e.q);
           const h = HOLD_BY_ID[e.mv.to];
           sfx.catchHold(e.q, e.combo, h.type);
           const pos = gripPos(e.mv.to, new V3());
@@ -366,6 +372,7 @@ export function startGame() {
           break;
         }
         case 'miss': {
+          noteTiming(e.off, 'miss');
           sfx.miss(e.reason);
           const pos = e.mv ? gripPos(e.mv.to, new V3()) : climber.J.hR.clone();
           popup(pos, e.reason === 'early' ? 'TROPPO PRESTO' : 'TROPPO TARDI', `${Math.round(Math.abs(e.off) * 1000)} ms`, Q_COLOR.miss, 1);
@@ -386,6 +393,7 @@ export function startGame() {
           feetOff = true;
           break;
         case 'feetCatch': {
+          noteTiming(e.off, e.q);
           sfx.feet(e.q);
           feetOff = false;
           climber.E.FL.speed = climber.E.FR.speed = 0.45;
@@ -396,6 +404,7 @@ export function startGame() {
           break;
         }
         case 'feetMiss': {
+          noteTiming(e.off, 'miss');
           sfx.feetMiss();
           const f = attempt.P.stances[attempt.stanceIdx].FL;
           popup(footPos(f, new V3()), 'PIEDI MANCATI', `−${e.cost} energia`, Q_COLOR.miss, 0.8);
@@ -408,6 +417,7 @@ export function startGame() {
         }
         case 'matchArm': sfx.matchCue(); break;
         case 'matchMiss': {
+          noteTiming(e.off, 'miss');
           const fin = attempt.P.moves[attempt.P.moves.length - 1].to;
           popup(gripPos(fin, new V3()), 'MATCH MANCATO', `−${e.cost} energia`, Q_COLOR.miss, 0.85);
           costFloat(-e.cost);
@@ -415,6 +425,7 @@ export function startGame() {
           break;
         }
         case 'top': {
+          noteTiming(e.off, e.q);
           sfx.top(e.flash);
           sfx.stopRest();
           const fin = attempt.P.moves[attempt.P.moves.length - 1].to;
@@ -437,6 +448,14 @@ export function startGame() {
         case 'restStart': sfx.startRest(); break;
         case 'restEnd': sfx.stopRest(); break;
       }
+    }
+  }
+  function noteTiming(off, q) {
+    if (meter.src) meter.last = { src: meter.src, off, q, at: simT };
+    if (tutorialLeft > 0 && (q === 'perfect' || q === 'good')) {
+      tutorialLeft--;
+      store.set('tutorial', tutorialLeft);
+      if (tutorialLeft === 0) toast('RITMO PRESO', 'Da qui in poi niente rallentatore', ROLE_HEX.start, 1.6);
     }
   }
   function timingNote(off) {
@@ -469,6 +488,33 @@ export function startGame() {
     setTimeout(() => el.remove(), 950);
   }
 
+  function activeTiming() {
+    const A = attempt;
+    if (!A || mode !== 'climb' || A.done) return null;
+    if (A.state === 'flight' && A.flight) {
+      const mv = A.flight.mv;
+      return { key: A.flight.t0, t0: A.flight.t0, dp: A.flight.dp, w: A.flight.w, color: ROLE_HEX[mv.finish ? 'finish' : 'hand'] };
+    }
+    if (A.state === 'feet' && A.feet) return { key: A.feet.t0, t0: A.feet.t0, dp: A.feet.dp, w: A.feet.w, color: ROLE_HEX.foot };
+    if (A.state === 'match' && A.match) return { key: A.match.t0, t0: A.match.t0, dp: A.match.dp, w: A.match.w, color: ROLE_HEX.finish };
+    return null;
+  }
+  // tic, tic, TAC: the TAC lands exactly on the deadpoint
+  function scheduleBeats(src) {
+    if (!src) return;
+    if (beat.key !== src.key) { beat.key = src.key; beat.next = 0; }
+    const b = clamp((src.dp - src.t0) / 3, 0.14, 0.28);
+    const times = [src.dp - 2 * b, src.dp - b, src.dp];
+    while (beat.next < 3) {
+      const bt = times[beat.next];
+      const lead = (bt - simT) / Math.max(0.05, timeScale);
+      if (bt < src.t0 + 0.03 || lead < -0.03) { beat.next++; continue; }
+      if (lead > 0.12) break;
+      sfx.tick(beat.next === 2, Math.max(0, lead));
+      beat.next++;
+    }
+  }
+
   // ===================== Camera =====================
   const camFocus = new V3(0, 2, 1), camPos = new V3(0, 1.4, 5), focusTarget = new V3(), camDesired = new V3(), tmp = new V3(), tmp2 = new V3();
   let camInit = false;
@@ -494,7 +540,7 @@ export function startGame() {
       }
       wall.localToWorld(focusTarget.copy(tmp));
       if (climber.mode === 'stand' || climber.mode === 'fall') focusTarget.y = Math.max(focusTarget.y, MAT_TOP + 1.0);
-      const dist = portrait ? 3.95 : 3.8;
+      const dist = portrait ? 3.45 : 3.55;
       camDesired.set(focusTarget.x * 0.55, Math.max(MAT_TOP + 0.6, focusTarget.y - 0.3 - 0.95 * s), focusTarget.z + dist - 1.0 * s);
     }
     if (!camInit) { camFocus.copy(focusTarget); camPos.copy(camDesired); camInit = true; }
@@ -507,7 +553,7 @@ export function startGame() {
       shakeAmp *= Math.exp(-dt * 9);
     }
     camera.lookAt(camFocus);
-    const baseFov = portrait ? 62 : 50;
+    const baseFov = portrait ? 60 : 50;
     fovPunch *= Math.exp(-dt * 8);
     const fov = baseFov - fovPunch;
     if (Math.abs(camera.fov - fov) > 0.01) { camera.fov = fov; camera.updateProjectionMatrix(); }
@@ -538,33 +584,84 @@ export function startGame() {
     const bl = Math.round((a & 255) * (1 - k) + (b & 255) * k);
     return `rgb(${r},${gg},${bl})`;
   }
-  function drawRing(local, t0, dp, color, label, sub) {
+  function hexA(hex, a) {
+    const n = parseInt(hex.slice(1), 16);
+    return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
+  }
+  function rrect(ctx, x, y, w, h, r) {
+    ctx.beginPath();
+    if (ctx.roundRect) ctx.roundRect(x, y, w, h, r); else ctx.rect(x, y, w, h);
+  }
+  const outlined = (ctx, text, x, y, fill, lw = 5) => { ctx.lineWidth = lw; ctx.strokeStyle = 'rgba(0,0,0,0.65)'; ctx.strokeText(text, x, y); ctx.fillStyle = fill; ctx.fillText(text, x, y); };
+  // marker on the target hold: a white ring that closes onto it exactly at the deadpoint
+  function drawRing(local, src, label, sub) {
     const P = projectLocal(local);
     if (P.z > 1) return;
-    const r0 = Math.max(16, screenRadius(local, 0.085));
-    const p = (simT - t0) / (dp - t0);
+    const r0 = Math.max(18, screenRadius(local, 0.1));
+    const p = (simT - src.t0) / (src.dp - src.t0);
     if (p < 0) return;
-    const r = p <= 1 ? r0 * (1 + 2.5 * (1 - p)) : r0 * Math.max(0.2, 1 - (p - 1) * 2.4);
     const ctx = fxc;
-    ctx.lineWidth = 6; ctx.strokeStyle = 'rgba(0,0,0,0.45)';
-    ctx.beginPath(); ctx.arc(P.x, P.y, r0, 0, Math.PI * 2); ctx.stroke();
-    ctx.lineWidth = 2.5; ctx.strokeStyle = 'rgba(255,255,255,0.95)';
-    ctx.beginPath(); ctx.arc(P.x, P.y, r0, 0, Math.PI * 2); ctx.stroke();
-    const k = clamp(p, 0, 1);
-    const alpha = clamp(p * 5, 0, 1) * (p > 1 ? Math.max(0, 1 - (p - 1) * 3) : 1);
-    ctx.globalAlpha = alpha;
-    ctx.lineWidth = 8.5 - 3 * k; ctx.strokeStyle = 'rgba(0,0,0,0.4)';
+    const inWin = Math.abs(simT - src.dp) <= src.w.good;
+    const r = p <= 1 ? r0 * (1 + 2.2 * (1 - p)) : r0 * Math.max(0.4, 1 - (p - 1) * 2);
+    ctx.globalAlpha = clamp(p * 4, 0, 1) * (p > 1 ? Math.max(0, 1 - (p - 1) * 2.5) : 1);
+    if (inWin) { ctx.fillStyle = 'rgba(255,255,255,0.5)'; ctx.beginPath(); ctx.arc(P.x, P.y, r0 * 1.02, 0, Math.PI * 2); ctx.fill(); }
+    ctx.lineWidth = 9; ctx.strokeStyle = 'rgba(0,0,0,0.55)';
     ctx.beginPath(); ctx.arc(P.x, P.y, r, 0, Math.PI * 2); ctx.stroke();
-    ctx.lineWidth = 5.5 - 2.5 * k; ctx.strokeStyle = mixHex('#ffffff', color, Math.pow(k, 1.6));
+    ctx.lineWidth = 4.5; ctx.strokeStyle = '#ffffff';
     ctx.beginPath(); ctx.arc(P.x, P.y, r, 0, Math.PI * 2); ctx.stroke();
     ctx.globalAlpha = 1;
+    ctx.textAlign = 'center';
+    if (inWin) { ctx.textBaseline = 'bottom'; ctx.font = `900 30px ${FONT_D}`; outlined(ctx, 'ORA!', P.x, P.y - r0 - 8, '#ffffff', 6); }
     if (label) {
-      ctx.font = `800 15px ${FONT_U}`; ctx.textAlign = 'center'; ctx.textBaseline = 'top';
-      ctx.lineWidth = 4; ctx.strokeStyle = 'rgba(0,0,0,0.6)'; ctx.fillStyle = '#fff';
-      ctx.strokeText(label, P.x, P.y + r0 + 8); ctx.fillText(label, P.x, P.y + r0 + 8);
-      if (sub) {
-        ctx.font = `800 13px ${FONT_U}`; ctx.fillStyle = ROLE_HEX.foot;
-        ctx.strokeText(sub, P.x, P.y + r0 + 26); ctx.fillText(sub, P.x, P.y + r0 + 26);
+      ctx.textBaseline = 'top';
+      ctx.font = `800 15px ${FONT_U}`; outlined(ctx, label, P.x, P.y + r0 + 8, '#ffffff', 4);
+      if (sub) { ctx.font = `800 13px ${FONT_U}`; outlined(ctx, sub, P.x, P.y + r0 + 26, ROLE_HEX.foot, 4); }
+    }
+  }
+  // the timing meter: the cursor runs left to right and hits the white ORA zone at the deadpoint
+  const Q_SHORT = { perfect: 'PERFETTO', good: 'BUONA', ok: 'SPORCA', miss: 'MANCATA' };
+  function drawMeter(src, result) {
+    const ctx = fxc;
+    const w = Math.min(W - 48, 440), h = 22;
+    const x = (W - w) / 2, y = H - safeBottom - 152;
+    const c = src.dp - src.t0;
+    const span = Math.max(0.2, c / 0.78);
+    const X = (sec) => x + w * clamp(sec / span, 0, 1);
+    const fadeK = result ? clamp(1 - (simT - result.at - 0.45) / 0.3, 0, 1) : 1;
+    ctx.globalAlpha = fadeK;
+    ctx.fillStyle = 'rgba(8,10,15,0.8)'; rrect(ctx, x - 3, y - 3, w + 6, h + 6, 13); ctx.fill();
+    ctx.lineWidth = 1.5; ctx.strokeStyle = 'rgba(239,233,220,0.3)'; ctx.stroke();
+    const zone = (half, fill) => { const a = X(c - half), b = X(c + half); ctx.fillStyle = fill; ctx.fillRect(a, y + 2, Math.max(3, b - a), h - 4); };
+    zone(src.w.ok, 'rgba(255,176,46,0.55)');
+    zone(src.w.good, hexA(src.color, 0.9));
+    zone(src.w.perfect, '#ffffff');
+    ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
+    ctx.font = `900 16px ${FONT_D}`; outlined(ctx, 'ORA', X(c), y - 6, '#ffffff', 4);
+    if (!result) {
+      const mx = X(simT - src.t0);
+      ctx.fillStyle = 'rgba(0,0,0,0.7)'; ctx.fillRect(mx - 4.5, y - 9, 9, h + 18);
+      ctx.fillStyle = '#ffffff'; ctx.fillRect(mx - 2.5, y - 7, 5, h + 14);
+    } else {
+      const tx = X(c + clamp(result.off, -c, span - c));
+      const col = result.q === 'miss' ? Q_COLOR.miss : Q_COLOR[result.q];
+      ctx.fillStyle = 'rgba(0,0,0,0.7)'; ctx.fillRect(tx - 4.5, y - 9, 9, h + 18);
+      ctx.fillStyle = col; ctx.fillRect(tx - 2.5, y - 7, 5, h + 14);
+      ctx.textBaseline = 'top'; ctx.font = `800 14px ${FONT_U}`;
+      const note = result.q === 'perfect' ? 'PERFETTO' : `${Q_SHORT[result.q]} · ${result.off < 0 ? 'presto' : 'tardi'} ${Math.abs(Math.round(result.off * 1000))} ms`;
+      outlined(ctx, note, clamp(tx, x + 70, x + w - 70), y + h + 8, col, 4);
+    }
+    ctx.globalAlpha = 1;
+    // learning overlay
+    if (!result && tutorialLeft > 0) {
+      const inGood = Math.abs(simT - src.dp) <= src.w.good;
+      ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
+      if (inGood) {
+        const pulse = 1 + 0.08 * Math.sin(simT * 40);
+        ctx.font = `900 ${Math.round(44 * pulse)}px ${FONT_D}`;
+        outlined(ctx, 'TOCCA ORA!', W / 2, y - 30, '#ffffff', 7);
+      } else if (simT < src.dp) {
+        ctx.font = `800 17px ${FONT_U}`;
+        outlined(ctx, 'Tocca quando il cursore entra in ORA', W / 2, y - 30, '#efe9dc', 4);
       }
     }
   }
@@ -572,17 +669,20 @@ export function startGame() {
     const ctx = fxc;
     ctx.clearRect(0, 0, W, H);
     const A = attempt;
-    if (A && mode === 'climb' && !A.done) {
-      if (A.state === 'flight' && A.flight) {
+    const src = activeTiming();
+    if (src) {
+      if (A.state === 'flight') {
         const mv = A.flight.mv;
         const h = HOLD_BY_ID[mv.to];
-        drawRing(gripPos(mv.to, tmp), A.flight.t0, A.flight.dp, ROLE_HEX[mv.finish ? 'finish' : 'hand'], HOLD_TYPES[h.type].it.toUpperCase(), mv.dyno ? 'LANCIO' : '');
-      } else if (A.state === 'feet' && A.feet) {
-        drawRing(footPos(A.P.stances[A.stanceIdx].FL, tmp), A.feet.t0, A.feet.dp, ROLE_HEX.foot, 'PIEDI', '');
-      } else if (A.state === 'match' && A.match) {
-        const fin = A.P.moves[A.P.moves.length - 1].to;
-        drawRing(gripPos(fin, tmp), A.match.t0, A.match.dp, ROLE_HEX.finish, 'MATCH', '');
+        drawRing(gripPos(mv.to, tmp), src, HOLD_TYPES[h.type].it.toUpperCase(), mv.dyno ? 'LANCIO' : '');
+      } else if (A.state === 'feet') {
+        drawRing(footPos(A.P.stances[A.stanceIdx].FL, tmp), src, 'PIEDI', '');
+      } else if (A.state === 'match') {
+        drawRing(gripPos(A.P.moves[A.P.moves.length - 1].to, tmp), src, 'MATCH', '');
       }
+      drawMeter(src, null);
+    } else if (meter.last && simT - meter.last.at < 0.75 && (mode === 'climb' || mode === 'fallen' || mode === 'topped')) {
+      drawMeter(meter.last.src, meter.last);
     }
     for (let i = bursts.length - 1; i >= 0; i--) {
       const b = bursts[i], k = (simT - b.t0) / (b.big ? 0.45 : 0.32);
@@ -670,13 +770,13 @@ export function startGame() {
     const restRate = A.restRateFor(A.bestHand() === 'L' ? A.L : A.R);
     switch (A.state) {
       case 'ready': return session.log.length === 0 && session.attemptNo === 1 ? 'Tocca per lanciarti verso la presa' : 'Tocca per partire';
-      case 'flight': return learning ? "Tocca quando l'anello si chiude sulla presa" : '';
+      case 'flight': return '';
       case 'hang':
         if (A.energy < A.maxEnergy - 22 && restRate > 3) return 'Presa buona: tieni premuto per recuperare';
         if (A.energy < 35 && restRate <= 0.5) return 'Qui non si recupera: muoviti';
         return learning ? 'Tocca per la prossima presa' : '';
       case 'rest': return restRate > 0 ? 'Scuoti le braccia… rilascia quando sei pronto' : 'Qui perdi energia: rilascia';
-      case 'feet': return "Piedi fuori: tocca quando l'anello si chiude";
+      case 'feet': return 'Piedi fuori: rimettili quando il cursore entra in ORA';
       case 'match': return 'Porta la seconda mano sul top';
       default: return '';
     }
@@ -719,7 +819,7 @@ export function startGame() {
     const now = performance.now();
     const ts = e && e.timeStamp;
     const pt = ts > 0 && Math.abs(now - ts) < 1000 ? ts : now;
-    return simT + (pt - lastFrame) / 1000;
+    return simT + ((pt - lastFrame) / 1000) * timeScale;
   }
   function onPress(t) {
     if (paused) return;
@@ -780,8 +880,13 @@ export function startGame() {
   updateRecordLine();
 
   // ===================== Resize & loop =====================
+  const sbProbe = document.createElement('div');
+  sbProbe.style.cssText = 'position:fixed;left:0;bottom:0;width:1px;height:env(safe-area-inset-bottom,0px);visibility:hidden;pointer-events:none';
+  document.body.appendChild(sbProbe);
+  let safeBottom = 0;
   function resize() {
     W = window.innerWidth; H = window.innerHeight;
+    safeBottom = sbProbe.getBoundingClientRect().height || 0;
     world.resize(W, H);
     fxDpr = Math.min(window.devicePixelRatio || 1, 2);
     fx.width = Math.round(W * fxDpr); fx.height = Math.round(H * fxDpr);
@@ -800,7 +905,18 @@ export function startGame() {
     if (LOCK) dt = 1 / 60;
     frameDt = dt;
     const frozen = paused || (TEST && window.__DP_FREEZE);
-    if (!frozen) simT += dt;
+    // slow motion around the deadpoint until the player has the rhythm
+    const src0 = activeTiming();
+    let tsTarget = 1;
+    if (src0 && tutorialLeft > 0) {
+      const p = (simT - src0.t0) / Math.max(0.05, src0.dp - src0.t0);
+      if (p > 0.55 && p < 1.3) tsTarget = 0.33;
+    }
+    timeScale += (tsTarget - timeScale) * (1 - Math.exp(-dt * 14));
+    if (tsTarget === 1 && timeScale > 0.985) timeScale = 1;
+    if (session) session.freezeCalib = timeScale < 0.99;
+    const sdt = dt * timeScale;
+    if (!frozen) simT += sdt;
     // performance guard: step quality down while playing if the device struggles
     fpsAcc += dt; fpsN++;
     if (fpsAcc > 3) {
@@ -834,8 +950,10 @@ export function startGame() {
         climber.stand.look = glance ? wall.worldToLocal(camLocal.copy(camera.position)) : (climber.stand.boardLook || null);
         climber.setExpr(glance ? 'happy' : 'calm');
       }
-      climber.update(dt, simT, world.angle);
-      world.updateChalk(dt);
+      climber.update(sdt, simT, world.angle);
+      world.updateChalk(sdt);
+      meter.src = activeTiming() || meter.src;
+      scheduleBeats(activeTiming());
       const nextId = attempt && mode === 'climb' && !attempt.done && attempt.nextMove() ? attempt.nextMove().to : null;
       world.updateLit(simT, nextId, (L) => { if (mode === 'intro') sfx.ledBlip(L.order); });
       world.updatePads(simT);
@@ -852,6 +970,7 @@ export function startGame() {
       get session() { return session; }, get attempt() { return attempt; }, get mode() { return mode; },
       get simT() { return simT; }, get fps() { return fpsAvg; }, get paused() { return paused; },
       get busy() { return fading() || climber.entering; },
+      get timeScale() { return timeScale; }, get tutorialLeft() { return tutorialLeft; }, set tutorialLeft(v) { tutorialLeft = v; },
       get quality() { return world.quality; },
       start: (g) => startSession(g || 0), skip: () => finishIntro(), sfx, Sound, climber, world,
       TUNE, HOLD_TYPES,

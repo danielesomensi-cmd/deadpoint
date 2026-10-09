@@ -559,6 +559,7 @@ export class Session {
     return this.attempt;
   }
   calibrate(off, q) {
+    if (this.freezeCalib) return;
     if (q !== 'perfect' && q !== 'good') return;
     this.latency = clamp(this.latency + TUNE.latencyRate * off, TUNE.latencyMin, TUNE.latencyMax);
   }

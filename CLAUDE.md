@@ -45,6 +45,18 @@ Use `QUICK=1`, `DPR=0.75` and `TIER=low` to iterate faster. `flow` and `smoke` s
 - Visual change → take screenshots (`test:shots`) and look at them before committing.
 - Test hooks exist only when the page is loaded with `window.__DP_TEST = true` (see `test/e2e.mjs`).
 
+### Timing UI (learned from playtests: keep it this explicit)
+- The player must know *when* to tap without knowing rhythm games. Three cues, all in `game.js`:
+  bottom **meter** (`drawMeter`: cursor runs into the white **ORA** zone; zone widths are the real
+  perfect/good/ok windows; after the tap it shows where you hit), a **white** approach ring on the
+  target hold (`drawRing`, fills white + "ORA!" inside the window), and an audio countdown
+  **tic, tic, TAC** (`scheduleBeats` → `sfx.tick`, the TAC lands on the deadpoint).
+- **Slow motion while learning**: until 3 good/perfect catches (`tutorialLeft`, localStorage
+  `deadpoint:tutorial`) time slows to 0.33× around the deadpoint and "TOCCA ORA!" appears.
+  Latency auto-calibration is frozen during slow motion (`session.freezeCalib`).
+- Never draw LEDs as rings and never use LED colours for timing cues: the first playtest confused
+  the timing ring with the LED rings. LEDs are filled glows under the hold; unlit holds are muted.
+
 ## Deploy
 - Push to `main` → GitHub Actions (`deploy.yml`) runs generator + balance checks, builds, publishes to
   GitHub Pages: https://danielesomensi-cmd.github.io/deadpoint/

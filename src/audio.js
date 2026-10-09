@@ -424,6 +424,19 @@ export class Sound {
     const t = this.now();
     this.tone({ t, f: mtof(84 + PENTA[i % 8]), dur: 0.07, g: 0.035, wave: 'triangle' });
   }
+  // countdown to the deadpoint: tic, tic, TAC (tap on the TAC). `delay` in seconds from now.
+  tick(accent, delay = 0) {
+    if (!this.ctx) return;
+    const t = this.ctx.currentTime + Math.max(0, delay) + 0.004;
+    if (accent) {
+      this.tone({ t, f: 1568, f2: 1500, dur: 0.1, g: 0.17, wave: 'triangle' });
+      this.noise({ t, dur: 0.03, buf: 'white', type: 'bandpass', f: 3400, Q: 2.2, g: 0.24 });
+      this.bell(t, 1046.5, 0.07, 0.45);
+    } else {
+      this.tone({ t, f: 1046.5, dur: 0.055, g: 0.08, wave: 'triangle' });
+      this.noise({ t, dur: 0.02, buf: 'white', type: 'bandpass', f: 2500, Q: 2.2, g: 0.12 });
+    }
+  }
   matchCue() {
     if (!this.ctx) return;
     this.tone({ t: this.now(), f: mtof(79), dur: 0.08, g: 0.04, wave: 'triangle' });

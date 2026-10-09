@@ -272,9 +272,11 @@ export function createWorld({ canvas, holds, quality = 'mid', test = {} }) {
     if (!list.length) continue;
     const mesh = new THREE.InstancedMesh(shapes[type][v].geo, holdMat, list.length);
     const col = new THREE.Color();
+    const muted = new THREE.Color('#4a4640');
     list.forEach((h, i) => {
       mesh.setMatrixAt(i, holdMatrix(h, _m4));
-      mesh.setColorAt(i, col.set(HOLD_PALETTE[h.color]));
+      // holds that are not part of the problem are muted, so the lit route pops
+      mesh.setColorAt(i, col.set(HOLD_PALETTE[h.color]).lerp(muted, 0.5).multiplyScalar(0.78));
       instIndex[h.id] = { key: type + v, i };
     });
     mesh.instanceMatrix.needsUpdate = true;
@@ -292,7 +294,14 @@ export function createWorld({ canvas, holds, quality = 'mid', test = {} }) {
   }
 
   // ---------- lit problem: LED rim at the base of each hold + soft glow on the wood ----------
-  const rimGeo = new THREE.TorusGeometry(1, 0.062, 8, 44);
+  // backlight under each lit hold: a filled disc that shows as a thick soft glow around the hold edge
+  const glowTex = canvasTex(renderer, 128, 128, (g, w) => {
+    const r = w / 2, gr = g.createRadialGradient(r, r, 0, r, r, r);
+    gr.addColorStop(0, 'rgba(255,255,255,1)'); gr.addColorStop(0.62, 'rgba(255,255,255,0.95)');
+    gr.addColorStop(0.8, 'rgba(255,255,255,0.32)'); gr.addColorStop(1, 'rgba(255,255,255,0)');
+    g.fillStyle = gr; g.fillRect(0, 0, w, w);
+  });
+  const rimGeo = new THREE.PlaneGeometry(2, 2);
   const haloGeo = new THREE.PlaneGeometry(1, 1);
   let ledGain = 1, haloK = 1;
   // LED colours are scaled to the same luminance so every colour blooms the same amount
@@ -326,10 +335,10 @@ export function createWorld({ canvas, holds, quality = 'mid', test = {} }) {
       const ix = instIndex[e.id];
       inst[ix.key].setMatrixAt(ix.i, ZERO);
       inst[ix.key].instanceMatrix.needsUpdate = true;
-      const rimMesh = new THREE.Mesh(rimGeo, new THREE.MeshBasicMaterial({ color: ledColor(ROLE_HEX[e.role], new THREE.Color()), transparent: true, opacity: 0, depthWrite: false }));
-      rimMesh.position.set(h.x, h.y, 0.006);
+      const rimMesh = new THREE.Mesh(rimGeo, new THREE.MeshBasicMaterial({ map: glowTex, color: ledColor(ROLE_HEX[e.role], new THREE.Color()), transparent: true, opacity: 0, depthWrite: false }));
+      rimMesh.position.set(h.x, h.y, 0.004);
       rimMesh.rotation.z = h.rot;
-      const rx = shape.rx * h.size * 1.08 + 0.006, ry = shape.ry * h.size * 1.08 + 0.006;
+      const rx = shape.rx * h.size * 1.3 + 0.018, ry = shape.ry * h.size * 1.3 + 0.018;
       rimMesh.userData.base = new V3(rx, ry, 1);
       rimMesh.scale.set(0.001, 0.001, 1);
       rimMesh.renderOrder = 3;
@@ -354,10 +363,10 @@ export function createWorld({ canvas, holds, quality = 'mid', test = {} }) {
       const e = Math.min(1, dt / 0.22);
       let sc = dt < 0.22 ? easeOutBack(e) : 1;
       const fade = Math.min(1, dt / 0.08);
-      let op = 0.42 * fade * haloK, em = 0.28;
+      let op = 0.42 * fade * haloK, em = 0.32;
       if (L.id === nextId) {
         const pz = 0.5 + 0.5 * Math.sin(now * 6.5);
-        sc *= 1 + 0.1 * pz; op = (0.35 + 0.35 * pz) * haloK; em = 0.3 + 0.35 * pz;
+        sc *= 1 + 0.12 * pz; op = (0.4 + 0.4 * pz) * haloK; em = 0.35 + 0.45 * pz;
       }
       const b = L.rim.userData.base;
       L.rim.scale.set(b.x * sc, b.y * sc, 1);
@@ -462,7 +471,7 @@ export function createWorld({ canvas, holds, quality = 'mid', test = {} }) {
       key.shadow.mapSize.set(Q.shadow, Q.shadow);
       if (key.shadow.map) { key.shadow.map.dispose(); key.shadow.map = null; }
     }
-    setLedGain(Q.bloom ? 1.5 : 0.85, Q.bloom ? 0.5 : 1);
+    setLedGain(Q.bloom ? 1.25 : 0.8, Q.bloom ? 0.45 : 0.9);
     buildComposer();
   }
   function resize(w, h) {
