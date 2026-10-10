@@ -4,6 +4,7 @@ import { Session, TUNE, HOLD_TYPES, GRADES, gradeLabel, gradeParams, makeBoard, 
 import { Sound } from './audio.js';
 import { createWorld, gripPos as holdGrip, footPos, ROLE_HEX } from './world.js';
 import { Climber } from './climber.js';
+import { t, holdName, problemName, fmtLocale } from './i18n.js';
 
 const V3 = THREE.Vector3;
 const $ = (id) => document.getElementById(id);
@@ -14,7 +15,7 @@ const deg = (d) => (d * Math.PI) / 180;
 const easeInOut = (x) => (x < 0.5 ? 2 * x * x : 1 - Math.pow(-2 * x + 2, 2) / 2);
 const easeOutBack = (x) => { const c1 = 1.9, c3 = c1 + 1; return 1 + c3 * Math.pow(x - 1, 3) + c1 * Math.pow(x - 1, 2); };
 
-const Q_TEXT = { perfect: 'PERFETTO', good: 'BUONA', ok: 'SPORCA' };
+const Q_TEXT = { perfect: t('perfect'), good: t('good'), ok: t('ok') };
 const Q_COLOR = { perfect: '#ffffff', good: '#2ad4e0', ok: '#ffb02e', miss: '#ff5a3c' };
 const TIERS = ['high', 'mid', 'low'];
 
@@ -272,8 +273,8 @@ export function startGame() {
     const r = session.finishAttempt();
     if (r === 'over') { gameOver(); return; }
     if (r === 'retry') {
-      const why = prevAttempt.fallReason === 'pump' ? 'Ghisato: riposa sulle maniglie' : prevAttempt.fallReason === 'early' ? 'Troppo presto' : 'Troppo tardi';
-      toast('CADUTO', `${why} · tentativo ${session.attemptNo} di ${TUNE.attempts}`, '#ff5a3c', 1.4);
+      const why = prevAttempt.fallReason === 'pump' ? t('whyPump') : prevAttempt.fallReason === 'early' ? t('whyEarly') : t('whyLate');
+      toast(t('fell'), `${why} · ${t('attemptOf', session.attemptNo, TUNE.attempts)}`, '#ff5a3c', 1.4);
       updateHud(true);
       beginAttempt();
       return;
@@ -292,12 +293,12 @@ export function startGame() {
     const newRecord = session.score > prevBest;
     if (newRecord) store.set('bestScore', session.score);
     if (best > prevG) store.set('bestG', best);
-    $('overEyebrow').textContent = session.completed ? 'Board chiusa, complimenti' : 'Sessione finita';
+    $('overEyebrow').textContent = session.completed ? t('boardCleared') : t('sessionOver');
     $('overGrade').textContent = best >= 0 ? GRADES[best].f : '—';
     $('overSub').textContent = best >= 0
-      ? `Grado massimo ${GRADES[best].f} · ${GRADES[best].v} a ${gradeParams(best).angle}°` + (newRecord ? ' · nuovo record' : '')
-      : 'Nessun blocco chiuso. Il primo è sempre il più difficile.';
-    $('overSends').innerHTML = session.log.map((l) => `<span class="${l.attempts === 1 ? 'fl' : ''}" title="${l.attempts === 1 ? 'Flash' : l.attempts + ' tentativi'}">${GRADES[l.g].f}<small>${l.attempts === 1 ? 'flash' : l.attempts + '°'}</small></span>`).join('');
+      ? t('topGrade', GRADES[best].f, GRADES[best].v, gradeParams(best).angle) + (newRecord ? t('newRecord') : '')
+      : t('noSends');
+    $('overSends').innerHTML = session.log.map((l) => `<span class="${l.attempts === 1 ? 'fl' : ''}" title="${l.attempts === 1 ? 'Flash' : t('attemptsN', l.attempts)}">${GRADES[l.g].f}<small>${l.attempts === 1 ? 'flash' : t('attemptShort', l.attempts)}</small></span>`).join('');
     $('overScore').textContent = fmt(session.score);
     $('overFlash').textContent = String(session.log.filter((l) => l.attempts === 1).length);
     $('overBest').textContent = fmt(Math.max(prevBest, session.score));
@@ -375,14 +376,14 @@ export function startGame() {
           noteTiming(e.off, 'miss');
           sfx.miss(e.reason);
           const pos = e.mv ? gripPos(e.mv.to, new V3()) : climber.J.hR.clone();
-          popup(pos, e.reason === 'early' ? 'TROPPO PRESTO' : 'TROPPO TARDI', `${Math.round(Math.abs(e.off) * 1000)} ms`, Q_COLOR.miss, 1);
+          popup(pos, e.reason === 'early' ? t('tooEarly') : t('tooLate'), `${Math.round(Math.abs(e.off) * 1000)} ms`, Q_COLOR.miss, 1);
           vibrate(40);
           break;
         }
         case 'fall':
           climber.fall('fall', e.reason === 'early' ? tA.copy(BUP).multiplyScalar(0.3) : null);
           climber.setExpr('ouch');
-          if (e.reason === 'pump') { popup(climber.S.clone(), 'GHISATO', 'energia finita', Q_COLOR.miss, 1.1); sfx.miss('pump'); }
+          if (e.reason === 'pump') { popup(climber.S.clone(), t('pumped'), t('outOfEnergy'), Q_COLOR.miss, 1.1); sfx.miss('pump'); }
           sfx.fallWhoosh();
           sfx.stopRest();
           sfx.setLevel(1);
@@ -398,7 +399,7 @@ export function startGame() {
           feetOff = false;
           climber.E.FL.speed = climber.E.FR.speed = 0.45;
           const f = attempt.P.stances[attempt.stanceIdx].FL;
-          popup(footPos(f, new V3()), e.q === 'perfect' ? 'PIEDI!' : 'PIEDI', e.q === 'perfect' ? '' : timingNote(e.off), Q_COLOR[e.q], 0.8);
+          popup(footPos(f, new V3()), e.q === 'perfect' ? t('feetBang') : t('feet'), e.q === 'perfect' ? '' : timingNote(e.off), Q_COLOR[e.q], 0.8);
           climber.kick(tA.copy(g).multiplyScalar(0.25), 0.2);
           if (e.combo >= TUNE.flowCombo) sfx.setLevel(2);
           break;
@@ -407,7 +408,7 @@ export function startGame() {
           noteTiming(e.off, 'miss');
           sfx.feetMiss();
           const f = attempt.P.stances[attempt.stanceIdx].FL;
-          popup(footPos(f, new V3()), 'PIEDI MANCATI', `−${e.cost} energia`, Q_COLOR.miss, 0.8);
+          popup(footPos(f, new V3()), t('feetMissed'), t('energyCost', e.cost), Q_COLOR.miss, 0.8);
           costFloat(-e.cost);
           climber.kick(tA.copy(g).multiplyScalar(0.8).addScaledVector(NRM, 0.35), 0.3);
           shake(0.04);
@@ -419,7 +420,7 @@ export function startGame() {
         case 'matchMiss': {
           noteTiming(e.off, 'miss');
           const fin = attempt.P.moves[attempt.P.moves.length - 1].to;
-          popup(gripPos(fin, new V3()), 'MATCH MANCATO', `−${e.cost} energia`, Q_COLOR.miss, 0.85);
+          popup(gripPos(fin, new V3()), t('matchMissed'), t('energyCost', e.cost), Q_COLOR.miss, 0.85);
           costFloat(-e.cost);
           sfx.miss('late');
           break;
@@ -439,8 +440,8 @@ export function startGame() {
           feetOff = false;
           const st = attempt.stats;
           const moves = st.perfect + st.good + st.ok;
-          const edge = e.energy < 15 ? ' · al limite!' : '';
-          toast(e.flash ? 'FLASH!' : 'TOP!', `+${fmt(attempt.score)} punti · perfetti ${st.perfect}/${moves}${edge}`, e.flash ? ROLE_HEX.foot : ROLE_HEX.finish, 2.4);
+          const edge = e.energy < 15 ? t('onTheEdge') : '';
+          toast(e.flash ? 'FLASH!' : 'TOP!', t('topLine', fmt(attempt.score), st.perfect, moves, edge), e.flash ? ROLE_HEX.foot : ROLE_HEX.finish, 2.4);
           after(0.95, () => { if (mode === 'topped') climber.fall('drop'); });
           after(2.8, () => { if (mode === 'topped') endAttempt(); });
           break;
@@ -455,13 +456,13 @@ export function startGame() {
     if (tutorialLeft > 0 && (q === 'perfect' || q === 'good')) {
       tutorialLeft--;
       store.set('tutorial', tutorialLeft);
-      if (tutorialLeft === 0) toast('RITMO PRESO', 'Da qui in poi niente rallentatore', ROLE_HEX.start, 1.6);
+      if (tutorialLeft === 0) toast(t('rhythm'), t('noSlowmo'), ROLE_HEX.start, 1.6);
     }
   }
   function timingNote(off) {
     const ms = Math.round(off * 1000);
     if (Math.abs(ms) < 12) return '';
-    return ms < 0 ? `presto ${-ms} ms` : `tardi ${ms} ms`;
+    return ms < 0 ? t('early', -ms) : t('late', ms);
   }
   function vibrate(p) { try { if (navigator.vibrate) navigator.vibrate(p); } catch (e) { /* not allowed */ } }
   function shake(a) { shakeAmp = Math.max(shakeAmp, a); }
@@ -611,7 +612,7 @@ export function startGame() {
     ctx.beginPath(); ctx.arc(P.x, P.y, r, 0, Math.PI * 2); ctx.stroke();
     ctx.globalAlpha = 1;
     ctx.textAlign = 'center';
-    if (inWin) { ctx.textBaseline = 'bottom'; ctx.font = `900 30px ${FONT_D}`; outlined(ctx, 'ORA!', P.x, P.y - r0 - 8, '#ffffff', 6); }
+    if (inWin) { ctx.textBaseline = 'bottom'; ctx.font = `900 30px ${FONT_D}`; outlined(ctx, t('nowBang'), P.x, P.y - r0 - 8, '#ffffff', 6); }
     if (label) {
       ctx.textBaseline = 'top';
       ctx.font = `800 15px ${FONT_U}`; outlined(ctx, label, P.x, P.y + r0 + 8, '#ffffff', 4);
@@ -619,7 +620,7 @@ export function startGame() {
     }
   }
   // the timing meter: the cursor runs left to right and hits the white ORA zone at the deadpoint
-  const Q_SHORT = { perfect: 'PERFETTO', good: 'BUONA', ok: 'SPORCA', miss: 'MANCATA' };
+  const Q_SHORT = { perfect: t('perfect'), good: t('good'), ok: t('ok'), miss: t('miss') };
   function drawMeter(src, result) {
     const ctx = fxc;
     const w = Math.min(W - 48, 440), h = 22;
@@ -636,7 +637,7 @@ export function startGame() {
     zone(src.w.good, hexA(src.color, 0.9));
     zone(src.w.perfect, '#ffffff');
     ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
-    ctx.font = `900 16px ${FONT_D}`; outlined(ctx, 'ORA', X(c), y - 6, '#ffffff', 4);
+    ctx.font = `900 16px ${FONT_D}`; outlined(ctx, t('now'), X(c), y - 6, '#ffffff', 4);
     if (!result) {
       const mx = X(simT - src.t0);
       ctx.fillStyle = 'rgba(0,0,0,0.7)'; ctx.fillRect(mx - 4.5, y - 9, 9, h + 18);
@@ -647,7 +648,8 @@ export function startGame() {
       ctx.fillStyle = 'rgba(0,0,0,0.7)'; ctx.fillRect(tx - 4.5, y - 9, 9, h + 18);
       ctx.fillStyle = col; ctx.fillRect(tx - 2.5, y - 7, 5, h + 14);
       ctx.textBaseline = 'top'; ctx.font = `800 14px ${FONT_U}`;
-      const note = result.q === 'perfect' ? 'PERFETTO' : `${Q_SHORT[result.q]} · ${result.off < 0 ? 'presto' : 'tardi'} ${Math.abs(Math.round(result.off * 1000))} ms`;
+      const offMs = Math.abs(Math.round(result.off * 1000));
+      const note = result.q === 'perfect' ? t('perfect') : `${Q_SHORT[result.q]} · ${result.off < 0 ? t('early', offMs) : t('late', offMs)}`;
       outlined(ctx, note, clamp(tx, x + 70, x + w - 70), y + h + 8, col, 4);
     }
     ctx.globalAlpha = 1;
@@ -658,10 +660,10 @@ export function startGame() {
       if (inGood) {
         const pulse = 1 + 0.08 * Math.sin(simT * 40);
         ctx.font = `900 ${Math.round(44 * pulse)}px ${FONT_D}`;
-        outlined(ctx, 'TOCCA ORA!', W / 2, y - 30, '#ffffff', 7);
+        outlined(ctx, t('tapNow'), W / 2, y - 30, '#ffffff', 7);
       } else if (simT < src.dp) {
         ctx.font = `800 17px ${FONT_U}`;
-        outlined(ctx, 'Tocca quando il cursore entra in ORA', W / 2, y - 30, '#efe9dc', 4);
+        outlined(ctx, t('tapWhen'), W / 2, y - 30, '#efe9dc', 4);
       }
     }
   }
@@ -674,11 +676,11 @@ export function startGame() {
       if (A.state === 'flight') {
         const mv = A.flight.mv;
         const h = HOLD_BY_ID[mv.to];
-        drawRing(gripPos(mv.to, tmp), src, HOLD_TYPES[h.type].it.toUpperCase(), mv.dyno ? 'LANCIO' : '');
+        drawRing(gripPos(mv.to, tmp), src, holdName(h.type).toUpperCase(), mv.dyno ? t('dyno') : '');
       } else if (A.state === 'feet') {
-        drawRing(footPos(A.P.stances[A.stanceIdx].FL, tmp), src, 'PIEDI', '');
+        drawRing(footPos(A.P.stances[A.stanceIdx].FL, tmp), src, t('feet'), '');
       } else if (A.state === 'match') {
-        drawRing(gripPos(A.P.moves[A.P.moves.length - 1].to, tmp), src, 'MATCH', '');
+        drawRing(gripPos(A.P.moves[A.P.moves.length - 1].to, tmp), src, t('match'), '');
       }
       drawMeter(src, null);
     } else if (meter.last && simT - meter.last.at < 0.75 && (mode === 'climb' || mode === 'fallen' || mode === 'topped')) {
@@ -721,7 +723,7 @@ export function startGame() {
     eNum: $('hudEnergyNum'), eFill: $('eFill'), eCap: $('eCap'), eGhost: $('eGhost'), pumpTag: $('pumpTag'),
     tries: $('tries').children, hint: $('hintText'), next: $('nextChip'), vignette: $('vignette'),
   };
-  const fmt = (n) => Math.round(n).toLocaleString('it-IT');
+  const fmt = (n) => Math.round(n).toLocaleString(fmtLocale);
   let lastHint = null, lastNext = null, lastScore = -1, lastCombo = -1;
   let frameDt = 0.016;
   function updateHud(force) {
@@ -730,7 +732,7 @@ export function startGame() {
     if (force) {
       hud.grade.textContent = gradeLabel(pr.grade);
       hud.angle.textContent = pr.angle + '°';
-      hud.name.innerHTML = `Blocco ${session.log.length + 1} · <b>${pr.name}</b>`;
+      hud.name.innerHTML = `${t('problemN', session.log.length + 1)} · <b>${problemName(pr)}</b>`;
       for (let i = 0; i < hud.tries.length; i++) {
         hud.tries[i].className = i + 1 < session.attemptNo ? 'used' : i + 1 === session.attemptNo ? 'now' : '';
       }
@@ -769,15 +771,15 @@ export function startGame() {
     const learning = session.log.length < 2 && session.g <= 2;
     const restRate = A.restRateFor(A.bestHand() === 'L' ? A.L : A.R);
     switch (A.state) {
-      case 'ready': return session.log.length === 0 && session.attemptNo === 1 ? 'Tocca per lanciarti verso la presa' : 'Tocca per partire';
+      case 'ready': return session.log.length === 0 && session.attemptNo === 1 ? t('hintFirst') : t('hintStart');
       case 'flight': return '';
       case 'hang':
-        if (A.energy < A.maxEnergy - 22 && restRate > 3) return 'Presa buona: tieni premuto per recuperare';
-        if (A.energy < 35 && restRate <= 0.5) return 'Qui non si recupera: muoviti';
-        return learning ? 'Tocca per la prossima presa' : '';
-      case 'rest': return restRate > 0 ? 'Scuoti le braccia… rilascia quando sei pronto' : 'Qui perdi energia: rilascia';
-      case 'feet': return 'Piedi fuori: rimettili quando il cursore entra in ORA';
-      case 'match': return 'Porta la seconda mano sul top';
+        if (A.energy < A.maxEnergy - 22 && restRate > 3) return t('hintRest');
+        if (A.energy < 35 && restRate <= 0.5) return t('hintNoRest');
+        return learning ? t('hintNext') : '';
+      case 'rest': return restRate > 0 ? t('hintShake') : t('hintDrain');
+      case 'feet': return t('hintFeet');
+      case 'match': return t('hintMatch');
       default: return '';
     }
   }
@@ -786,9 +788,9 @@ export function startGame() {
     const mv = A.nextMove();
     if (!mv) return '';
     const h = HOLD_BY_ID[mv.to];
-    let s = `${mv.finish ? 'Top' : 'Prossima'}: <b>${HOLD_TYPES[h.type].it.toUpperCase()}</b>`;
-    if (mv.dyno) s += '<span class="tag">LANCIO</span>';
-    if (mv.feetCut) s += '<span class="warn">PIEDI FUORI</span>';
+    let s = `${mv.finish ? t('nextTop') : t('nextHold')}: <b>${holdName(h.type).toUpperCase()}</b>`;
+    if (mv.dyno) s += `<span class="tag">${t('dyno')}</span>`;
+    if (mv.feetCut) s += `<span class="warn">${t('feetCut')}</span>`;
     return s;
   }
 
@@ -796,9 +798,9 @@ export function startGame() {
   const cardEl = $('card'), toastEl = $('toast');
   function showCard(pr) {
     const num = session.log.length + 1;
-    cardEl.innerHTML = `<div class="card-in"><div class="n">BLOCCO ${num} · TENTATIVO ${session.attemptNo} DI ${TUNE.attempts}</div>`
-      + `<div class="t">${pr.name}</div><div class="s">${gradeLabel(pr.grade)} <span>· board a ${pr.angle}° · ${pr.moves.length} movimenti</span></div>`
-      + '<div class="tap">TOCCA PER INIZIARE</div></div>';
+    cardEl.innerHTML = `<div class="card-in"><div class="n">${t('cardHead', num, session.attemptNo, TUNE.attempts)}</div>`
+      + `<div class="t">${problemName(pr)}</div><div class="s">${gradeLabel(pr.grade)} <span>${t('cardSub', pr.angle, pr.moves.length)}</span></div>`
+      + `<div class="tap">${t('tapToStart')}</div></div>`;
     cardEl.hidden = false;
     hud.name.style.visibility = 'hidden';
   }
@@ -845,9 +847,9 @@ export function startGame() {
 
   function togglePause(on) {
     paused = on;
-    if (on && session) $('pauseEyebrow').textContent = `${session.problem.name} · ${gradeLabel(session.problem.grade)} · ${session.problem.angle}°`;
+    if (on && session) $('pauseEyebrow').textContent = `${problemName(session.problem)} · ${gradeLabel(session.problem.grade)} · ${session.problem.angle}°`;
     $('pause').hidden = !on;
-    $('btnMute').textContent = sfx.muted ? 'Audio: no' : 'Audio: sì';
+    $('btnMute').textContent = sfx.muted ? t('soundOff') : t('soundOn');
     if (on && attempt && attempt.pressing) attempt.release(simT);
     sfx.pause(on);
   }
@@ -867,14 +869,14 @@ export function startGame() {
   $('btnResume').addEventListener('click', () => { togglePause(false); sfx.ui(); });
   $('btnMute').addEventListener('click', () => {
     sfx.init(); sfx.setMuted(!sfx.muted); store.set('muted', sfx.muted);
-    $('btnMute').textContent = sfx.muted ? 'Audio: no' : 'Audio: sì';
+    $('btnMute').textContent = sfx.muted ? t('soundOff') : t('soundOn');
   });
   $('btnQuit').addEventListener('click', () => { sfx.pause(false); goTitle(); });
   function updateRecordLine() {
     const bs = store.get('bestScore', 0), bg = store.get('bestG', -1);
     $('recordLine').innerHTML = bs > 0
-      ? `Record: <b>${bg >= 0 ? gradeLabel(bg) : '—'}</b> · <b>${fmt(bs)}</b> punti. Tre tentativi per blocco.`
-      : "Tre tentativi per blocco. Meglio con l'audio.";
+      ? t('recordLine', bg >= 0 ? gradeLabel(bg) : '—', fmt(bs))
+      : t('introLine');
   }
   setSeg('startSeg', startG); setSeg('overSeg', startG);
   updateRecordLine();

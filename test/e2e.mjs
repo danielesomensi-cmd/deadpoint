@@ -21,7 +21,8 @@ const server = http.createServer((req, res) => {
   fs.createReadStream(DIST).pipe(res);
 }).listen(0, '127.0.0.1');
 await new Promise((r) => server.once('listening', r));
-const URL = `http://127.0.0.1:${server.address().port}/`;
+// QS=lang=en&embed=1 loads the page with a query string (English UI / embedded mode)
+const URL = `http://127.0.0.1:${server.address().port}/` + (process.env.QS ? `?${process.env.QS}` : '');
 
 // In-page bot: schedules presses against the game's own clock and dispatches real pointer events.
 const BOT = String.raw`(() => {
@@ -90,6 +91,7 @@ try {
   const vlog = (m) => { if (process.env.VERBOSE) console.error(`[e2e ${((Date.now() - T0) / 1000).toFixed(1)}s]`, m); };
   await page.goto(URL, { waitUntil: 'domcontentloaded' }); vlog('dom loaded');
   await page.waitForFunction(() => window.__DP && window.__DP.simT > 0.5, null, { timeout: 120000 }); vlog('game running');
+  report.ui = await page.evaluate(() => `${document.documentElement.lang} | ${document.getElementById('btnStart').textContent}`);
   await page.evaluate(BOT); vlog('bot injected');
   const ev = (js) => page.evaluate(js);
   const frames = (n) => page.evaluate((n) => new Promise((r) => { let k = 0; const f = () => (++k >= n ? r() : requestAnimationFrame(f)); requestAnimationFrame(f); }), n);

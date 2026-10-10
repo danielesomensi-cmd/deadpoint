@@ -261,8 +261,10 @@ function tryGenerate(board, g, seed, relaxed) {
   for (const s of stances) for (const f of [s.FL, s.FR]) if (f.id != null && !handIds.has(f.id)) roles[f.id] = 'foot';
   for (const m of moves) roles[m.to] = m.finish ? 'finish' : 'hand';
   roles[start.L] = 'start'; roles[start.R] = 'start';
-  const name = NAME_A[Math.floor(rnd() * NAME_A.length)] + ' ' + NAME_B[Math.floor(rnd() * NAME_B.length)];
-  return { grade: g, angle, name, seed, start, moves, stances, roles };
+  const ia = Math.floor(rnd() * NAME_A.length), ib = Math.floor(rnd() * NAME_B.length);
+  const name = NAME_A[ia] + ' ' + NAME_B[ib];
+  // nameIdx lets the UI show a translated name (src/i18n.js) without touching the RNG sequence
+  return { grade: g, angle, name, nameIdx: [ia, ib], seed, start, moves, stances, roles };
 }
 
 // ---------- One attempt on a problem ----------

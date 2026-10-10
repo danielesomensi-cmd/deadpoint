@@ -23,12 +23,12 @@
 <header id="hud" hidden>
   <div class="hud-row">
     <div class="chip"><span class="g" id="hudGrade">4 · V0</span><span class="a" id="hudAngle">20°</span></div>
-    <div id="tries" aria-label="Tentativi"><i></i><i></i><i></i></div>
+    <div id="tries" aria-label="Tentativi" data-i18n-aria="ariaTries"><i></i><i></i><i></i></div>
     <div class="score"><span id="hudScore">0</span><span id="hudCombo"></span></div>
-    <button id="btnPause" aria-label="Pausa"><svg viewBox="0 0 16 16"><rect x="3" y="2" width="3.5" height="12" rx="1"/><rect x="9.5" y="2" width="3.5" height="12" rx="1"/></svg></button>
+    <button id="btnPause" aria-label="Pausa" data-i18n-aria="ariaPause"><svg viewBox="0 0 16 16"><rect x="3" y="2" width="3.5" height="12" rx="1"/><rect x="9.5" y="2" width="3.5" height="12" rx="1"/></svg></button>
   </div>
   <div class="energy">
-    <div class="energy-top"><span>AVAMBRACCI<span id="pumpTag">GHISA</span></span><span id="hudEnergyNum">100</span></div>
+    <div class="energy-top"><span><span data-i18n="forearms">AVAMBRACCI</span><span id="pumpTag" data-i18n="pump">GHISA</span></span><span id="hudEnergyNum">100</span></div>
     <div class="bar" id="eBar"><div id="eGhost"></div><div id="eFill"></div><div id="eCap"></div></div>
   </div>
   <div id="hudName"></div>
@@ -40,27 +40,27 @@
 
 <section class="screen" id="title">
   <div class="screen-inner">
-    <div class="eyebrow">Board LED regolabile · 20°–70°</div>
+    <div class="eyebrow" data-i18n="titleEyebrow">Board LED regolabile · 20°–70°</div>
     <h1 class="logo">DEAD<br><span>POINT</span></h1>
-    <p class="lede">Prendi ogni presa nel punto morto del lancio, gestisci la ghisa e chiudi il blocco con le mani sul top.</p>
+    <p class="lede" data-i18n="lede">Prendi ogni presa nel punto morto del lancio, gestisci la ghisa e chiudi il blocco con le mani sul top.</p>
     <div class="legend">
-      <span><i class="dot" style="color:var(--led-start);background:var(--led-start)"></i>Partenza</span>
-      <span><i class="dot" style="color:var(--led-hand);background:var(--led-hand)"></i>Mani e piedi</span>
-      <span><i class="dot" style="color:var(--led-finish);background:var(--led-finish)"></i>Top</span>
-      <span><i class="dot" style="color:var(--led-foot);background:var(--led-foot)"></i>Solo piedi</span>
+      <span><i class="dot" style="color:var(--led-start);background:var(--led-start)"></i><span data-i18n="legStart">Partenza</span></span>
+      <span><i class="dot" style="color:var(--led-hand);background:var(--led-hand)"></i><span data-i18n="legHand">Mani e piedi</span></span>
+      <span><i class="dot" style="color:var(--led-finish);background:var(--led-finish)"></i><span data-i18n="legFinish">Top</span></span>
+      <span><i class="dot" style="color:var(--led-foot);background:var(--led-foot)"></i><span data-i18n="legFoot">Solo piedi</span></span>
     </div>
     <ol class="how">
-      <li><span><b>Tocca</b> per lanciarti verso la presa illuminata.</span></li>
-      <li><span><b>Tocca di nuovo quando il cursore entra in ORA</b>, la zona bianca della barra in basso. <small>Tic, tic, TAC: si tocca sul TAC. Perfetto = meno fatica.</small></span></li>
-      <li><span><b>Tieni premuto</b> sulle prese buone per scuotere le braccia. <small>Sulle tacchette non si recupera.</small></span></li>
+      <li><span data-i18n="how1"><b>Tocca</b> per lanciarti verso la presa illuminata.</span></li>
+      <li><span data-i18n="how2"><b>Tocca di nuovo quando il cursore entra in ORA</b>, la zona bianca della barra in basso. <small>Tic, tic, TAC: si tocca sul TAC. Perfetto = meno fatica.</small></span></li>
+      <li><span data-i18n="how3"><b>Tieni premuto</b> sulle prese buone per scuotere le braccia. <small>Sulle tacchette non si recupera.</small></span></li>
     </ol>
-    <div class="seg-label">Parti da</div>
+    <div class="seg-label" data-i18n="startFrom">Parti da</div>
     <div class="seg" id="startSeg">
       <button id="sg0" data-g="0" aria-pressed="true">4<small>V0 · 20°</small></button>
       <button id="sg3" data-g="3" aria-pressed="false">6A+<small>V3 · 35°</small></button>
       <button id="sg6" data-g="6" aria-pressed="false">7A<small>V6 · 45°</small></button>
     </div>
-    <button class="btn" id="btnStart">Inizia sessione</button>
+    <button class="btn" id="btnStart" data-i18n="btnStart">Inizia sessione</button>
     <div class="meta" id="recordLine">Tre tentativi per blocco. Meglio con l'audio.</div>
   </div>
 </section>
@@ -68,38 +68,38 @@
 
 <section class="screen" id="over" hidden>
   <div class="screen-inner">
-    <div class="eyebrow" id="overEyebrow">Sessione finita</div>
+    <div class="eyebrow" id="overEyebrow" data-i18n="sessionOver">Sessione finita</div>
     <p class="big" id="overGrade">—</p>
     <div class="meta" id="overSub"></div>
     <div class="sends" id="overSends"></div>
     <div class="stats">
-      <div class="stat"><div class="k">Punti</div><div class="v" id="overScore">0</div></div>
+      <div class="stat"><div class="k" data-i18n="statPoints">Punti</div><div class="v" id="overScore">0</div></div>
       <div class="stat"><div class="k">Flash</div><div class="v" id="overFlash">0</div></div>
-      <div class="stat"><div class="k">Record</div><div class="v" id="overBest">0</div></div>
+      <div class="stat"><div class="k" data-i18n="statBest">Record</div><div class="v" id="overBest">0</div></div>
     </div>
-    <div class="seg-label">Riparti da</div>
+    <div class="seg-label" data-i18n="restartFrom">Riparti da</div>
     <div class="seg" id="overSeg">
       <button id="og0" data-g="0" aria-pressed="true">4<small>V0 · 20°</small></button>
       <button id="og3" data-g="3" aria-pressed="false">6A+<small>V3 · 35°</small></button>
       <button id="og6" data-g="6" aria-pressed="false">7A<small>V6 · 45°</small></button>
     </div>
-    <button class="btn" id="btnAgain">Nuova sessione</button>
+    <button class="btn" id="btnAgain" data-i18n="btnAgain">Nuova sessione</button>
   </div>
 </section>
 
 <section class="screen" id="pause" hidden>
   <div class="screen-inner">
-    <div class="eyebrow" id="pauseEyebrow">In pausa</div>
-    <p class="logo" style="font-size:72px">PAUSA</p>
-    <button class="btn" id="btnResume">Riprendi</button>
+    <div class="eyebrow" id="pauseEyebrow" data-i18n="paused">In pausa</div>
+    <p class="logo" style="font-size:72px" data-i18n="pauseBig">PAUSA</p>
+    <button class="btn" id="btnResume" data-i18n="btnResume">Riprendi</button>
     <div class="row">
-      <button class="btn ghost" id="btnMute">Audio: sì</button>
-      <button class="btn ghost" id="btnQuit">Esci</button>
+      <button class="btn ghost" id="btnMute" data-i18n="soundOn">Audio: sì</button>
+      <button class="btn ghost" id="btnQuit" data-i18n="btnQuit">Esci</button>
     </div>
   </div>
 </section>
 
-<div id="fatal" hidden><p>Questo dispositivo non supporta WebGL, serve per la grafica 3D del gioco.</p></div>
+<div id="fatal" hidden><p data-i18n="noWebgl">Questo dispositivo non supporta WebGL, serve per la grafica 3D del gioco.</p></div>
 
 <script type="module" src="./src/main.js"></script>
 </body>
