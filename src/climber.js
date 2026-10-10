@@ -19,12 +19,12 @@ const ARM_MAX = (BODY.ARM1 + BODY.ARM2) * 0.985;
 const LEG_MAX = (BODY.LEG1 + BODY.LEG2) * 0.985;
 const HEAD_R = 0.125;
 
-// Palette: reads against the plywood (skin darker/redder than the wood, dark pants) and stays clear
+// Palette: reads against the plywood (skin darker/redder than the wood, dark shorts) and stays clear
 // of the LED hues (green start, cyan hand, magenta finish, yellow foot). Chalked hands are the
 // brightest thing on the climber: they carry the deadpoint.
 const COLORS = {
-  skin: '#d9926a', chalk: '#fbf8f2', hair: '#3a2014', hairHi: '#5e3620', tie: '#ffd3e0',
-  shirt: '#d8343c', shirtDark: '#a8222c', trim: '#fff6ee', pants: '#25272f', cuff: '#4a4d58',
+  skin: '#d9926a', skinDark: '#a8603f', chalk: '#fbf8f2', hair: '#3a2014', hairHi: '#5e3620', tie: '#ffd3e0',
+  shirt: '#d8343c', shirtDark: '#a8222c', trim: '#fff6ee', pants: '#25272f', cuff: '#d8343c',
   shoe: '#1c1d22', rand: '#d8343c', sole: '#0f1013', strap: '#f4f1ea', bag: '#22304f', bagRim: '#f4f1ea',
   belt: '#15161a', outline: '#1a110c',
 };
@@ -222,27 +222,29 @@ function chainCurve(pts, t, out) {
 }
 
 // ---------- painted textures ----------
-// Racerback tank top on the chest lathe: u = 0 is the middle of the back, v runs waist → neck.
-// Shoulder blades and shoulders are bare skin, a white trim follows the cut, the spine is a crease.
-function drawTank(profileV) {
+// Racerback sports bra on the chest lathe: u = 0 is the middle of the back, v follows the lathe
+// knots (yToV). Bare midriff under the band, bare shoulder blades, V neckline in front, white trim
+// along every cut, navel on the belly.
+function drawTank(yToV) {
   const W = 256, c = document.createElement('canvas');
   c.width = c.height = W;
   const g = c.getContext('2d');
   const img = g.createImageData(W, W), D = img.data;
   const hex = (h) => [parseInt(h.slice(1, 3), 16), parseInt(h.slice(3, 5), 16), parseInt(h.slice(5, 7), 16)];
-  const SH = hex(COLORS.shirt), SD = hex(COLORS.shirtDark), SK = hex(COLORS.skin), TR = hex(COLORS.trim);
-  // cut line: v above which it is skin, as a function of the angular distance d from the back middle
+  const SH = hex(COLORS.shirt), SD = hex(COLORS.shirtDark), SK = hex(COLORS.skin), TR = hex(COLORS.trim), NV = hex(COLORS.skinDark);
+  const vBand = yToV(0.135), vNavel = yToV(0.05);
+  // top cut: v above which it is skin, as a function of the angular distance d from the back middle
   const cut = (d) => {
-    if (d < 0.04) return 2; // racerback strap up to the neck
-    if (d < 0.2) return 0.52 + 0.4 * (1 - smoothstep((d - 0.04) / 0.13)); // shoulder blades bare
-    if (d < 0.32) return 0.52; // arm holes
-    if (d < 0.37) return 0.88; // front straps
-    return 0.8; // scoop neck
+    if (d < 0.035) return 2; // racerback strap up to the neck
+    if (d < 0.2) return yToV(0.205 + 0.13 * (1 - smoothstep((d - 0.035) / 0.12))); // shoulder blades bare
+    if (d < 0.3) return yToV(0.205); // arm holes
+    if (d < 0.35) return 2; // front straps
+    return yToV(0.29 - 0.055 * smoothstep((d - 0.38) / 0.12)); // V neckline
   };
   const skin = new Uint8Array(W * W);
   for (let y = 0; y < W; y++) for (let x = 0; x < W; x++) {
-    const u = (x + 0.5) / W, d = Math.min(u, 1 - u);
-    skin[y * W + x] = 1 - (y + 0.5) / W > cut(d) ? 1 : 0;
+    const u = (x + 0.5) / W, d = Math.min(u, 1 - u), v = 1 - (y + 0.5) / W;
+    skin[y * W + x] = v > cut(d) || v < vBand ? 1 : 0;
   }
   const R = 5; // trim width in texels
   for (let y = 0; y < W; y++) {
@@ -250,8 +252,11 @@ function drawTank(profileV) {
     for (let x = 0; x < W; x++) {
       const u = (x + 0.5) / W, d = Math.min(u, 1 - u);
       let col = SH;
-      if (skin[y * W + x]) col = SK;
-      else {
+      if (skin[y * W + x]) {
+        col = SK;
+        const nx = (u - 0.5) * W, ny = (v - vNavel) * W;
+        if (nx * nx / 4 + ny * ny / 12 < 1) col = NV; // navel
+      } else {
         let near = false;
         for (let dy = -R; dy <= R && !near; dy++) for (let dx = -R; dx <= R; dx++) {
           const yy = y + dy;
@@ -259,8 +264,8 @@ function drawTank(profileV) {
           if (skin[yy * W + ((x + dx + W) % W)]) { near = true; break; }
         }
         if (near) col = TR;
-        else if (d < 0.007 && v < 0.5) col = SD; // spine crease
-        else if (v < profileV + 0.03) col = SD; // hem
+        else if (d < 0.007) col = SD; // racerback seam
+        else if (d > 0.493 && v < cut(0.5) - 0.02) col = SD; // centre seam between the cups
       }
       const o = (y * W + x) * 4;
       D[o] = col[0]; D[o + 1] = col[1]; D[o + 2] = col[2]; D[o + 3] = 255;
@@ -321,10 +326,28 @@ function drawFace(expr) {
   const blush = expr === 'happy' ? 0.6 : expr === 'effort' ? 0.55 : 0.35;
   cheek(cx - 66, blush); cheek(cx + 66, blush);
   g.lineCap = 'round'; g.lineJoin = 'round';
-  const eyeOpen = (x, ry = 21, look = 0) => {
-    g.fillStyle = ink; g.beginPath(); g.ellipse(x, ey, 14.5, ry, 0, 0, Math.PI * 2); g.fill();
-    g.fillStyle = '#ffffff'; g.beginPath(); g.arc(x + 5 + look, ey - ry * 0.38, 5.2, 0, Math.PI * 2); g.fill();
-    g.beginPath(); g.arc(x - 4 + look, ey + ry * 0.3, 2.4, 0, Math.PI * 2); g.fill();
+  // lashes flick out on the outer corner (sg: -1 left eye, +1 right eye)
+  const lashes = (x, y, sg, r) => {
+    g.strokeStyle = ink; g.lineWidth = 3.6;
+    for (const [a, l] of [[-0.35, 9], [-0.05, 11], [0.25, 9]]) {
+      const ax = x + sg * r * Math.cos(a), ay = y - r * 0.9 * Math.sin(a + 0.55);
+      g.beginPath(); g.moveTo(ax, ay); g.lineTo(ax + sg * l * Math.cos(a - 0.5), ay - l * Math.sin(a + 0.45)); g.stroke();
+    }
+  };
+  const eyeOpen = (x, ry = 23, look = 0) => {
+    const sg = x < cx ? -1 : 1;
+    g.fillStyle = ink; g.beginPath(); g.ellipse(x, ey, 16, ry, 0, 0, Math.PI * 2); g.fill();
+    g.fillStyle = '#6b3a22'; g.beginPath(); g.ellipse(x + look, ey + ry * 0.3, 10, ry * 0.45, 0, 0, Math.PI * 2); g.fill();
+    g.fillStyle = ink; g.beginPath(); g.ellipse(x + look, ey + ry * 0.12, 6, ry * 0.42, 0, 0, Math.PI * 2); g.fill();
+    g.fillStyle = '#ffffff'; g.beginPath(); g.arc(x + 5 + look, ey - ry * 0.38, 5.8, 0, Math.PI * 2); g.fill();
+    g.beginPath(); g.arc(x - 4 + look, ey + ry * 0.32, 2.6, 0, Math.PI * 2); g.fill();
+    g.strokeStyle = ink; g.lineWidth = 6.5; g.beginPath(); g.ellipse(x, ey + 2, 17.5, ry + 1, 0, Math.PI * 1.08, Math.PI * 1.92); g.stroke();
+    lashes(x, ey + 2, sg, 17.5);
+  };
+  const lip = '#b8475a';
+  const lips = (w = 13) => { // small closed smile, lipstick pink
+    g.fillStyle = '#d9667a'; g.beginPath(); g.ellipse(cx, 163, w * 0.75, 5, 0, 0, Math.PI * 2); g.fill();
+    g.strokeStyle = lip; g.lineWidth = 4; g.beginPath(); g.arc(cx, 152, w, Math.PI * 0.25, Math.PI * 0.75); g.stroke();
   };
   const arc = (x, y, r, a0, a1, w = 6) => { g.strokeStyle = ink; g.lineWidth = w; g.beginPath(); g.arc(x, y, r, a0, a1); g.stroke(); };
   const line = (pts, w = 6) => { g.strokeStyle = ink; g.lineWidth = w; g.beginPath(); pts.forEach(([x, y], i) => (i ? g.lineTo(x, y) : g.moveTo(x, y))); g.stroke(); };
@@ -335,15 +358,17 @@ function drawFace(expr) {
   switch (expr) {
     case 'calm':
       eyeOpen(cx - ex); eyeOpen(cx + ex); brows(0, 0);
-      arc(cx, 160, 15, Math.PI * 0.2, Math.PI * 0.8, 5.5);
+      lips();
       break;
     case 'blink':
-      arc(cx - ex, ey - 8, 15, Math.PI * 0.18, Math.PI * 0.82); arc(cx + ex, ey - 8, 15, Math.PI * 0.18, Math.PI * 0.82);
-      brows(0, 0); arc(cx, 160, 15, Math.PI * 0.2, Math.PI * 0.8, 5.5);
+      arc(cx - ex, ey - 8, 16, Math.PI * 0.18, Math.PI * 0.82, 6.5); arc(cx + ex, ey - 8, 16, Math.PI * 0.18, Math.PI * 0.82, 6.5);
+      lashes(cx - ex, ey + 18, -1, 12); lashes(cx + ex, ey + 18, 1, 12);
+      brows(0, 0); lips();
       break;
     case 'focus':
-      eyeOpen(cx - ex, 16, 1); eyeOpen(cx + ex, 16, 1); brows(-6, -2);
-      line([[cx - 10, 166], [cx + 10, 166]], 5.5);
+      eyeOpen(cx - ex, 18, 1); eyeOpen(cx + ex, 18, 1); brows(-6, -2);
+      g.fillStyle = '#d9667a'; g.beginPath(); g.ellipse(cx, 166, 9, 4.5, 0, 0, Math.PI * 2); g.fill();
+      line([[cx - 9, 164], [cx + 9, 164]], 3.5);
       break;
     case 'effort':
       line([[cx - ex - 14, ey - 10], [cx - ex + 10, ey], [cx - ex - 14, ey + 10]], 6.5);
@@ -354,6 +379,7 @@ function drawFace(expr) {
       break;
     case 'happy':
       arc(cx - ex, ey + 6, 15, Math.PI * 1.15, Math.PI * 1.85, 6.5); arc(cx + ex, ey + 6, 15, Math.PI * 1.15, Math.PI * 1.85, 6.5);
+      lashes(cx - ex, ey + 4, -1, 14); lashes(cx + ex, ey + 4, 1, 14);
       brows(3, 6);
       g.fillStyle = '#5a1f1a'; g.beginPath(); g.moveTo(cx - 24, 150); g.quadraticCurveTo(cx, 194, cx + 24, 150); g.closePath(); g.fill();
       g.fillStyle = '#ff7f7a'; g.beginPath(); g.ellipse(cx, 172, 10, 6, 0, 0, Math.PI * 2); g.fill();
@@ -365,8 +391,9 @@ function drawFace(expr) {
       break;
     case 'rest':
       arc(cx - ex, ey - 4, 14, Math.PI * 0.15, Math.PI * 0.85, 5.5); arc(cx + ex, ey - 4, 14, Math.PI * 0.15, Math.PI * 0.85, 5.5);
+      lashes(cx - ex, ey + 10, -1, 12); lashes(cx + ex, ey + 10, 1, 12);
       brows(2, -2);
-      g.strokeStyle = ink; g.lineWidth = 5; g.beginPath(); g.ellipse(cx, 164, 7, 8, 0, 0, Math.PI * 2); g.stroke();
+      g.strokeStyle = lip; g.lineWidth = 5; g.beginPath(); g.ellipse(cx, 164, 7, 8, 0, 0, Math.PI * 2); g.stroke();
       break;
   }
   const t = new THREE.CanvasTexture(c);
@@ -463,9 +490,14 @@ export class Climber {
   // ------------------------------------------------------------ model
   build() {
     const M = (color, rim = 0.3) => addRim(new THREE.MeshToonMaterial({ color, gradientMap: RAMP }), rim);
-    const CH = [[0.02, -0.04], [0.112, -0.035], [0.116, 0.0], [0.128, 0.07], [0.15, 0.15], [0.172, 0.22], [0.174, 0.27], [0.158, 0.315], [0.124, 0.345], [0.078, 0.365], [0.02, 0.372]];
+    // chest lathe: narrow waist, ribcage, shoulders (radius, height above the waist joint)
+    const CH = [[0.02, -0.04], [0.106, -0.035], [0.104, 0.0], [0.108, 0.06], [0.128, 0.13], [0.15, 0.2], [0.166, 0.26], [0.156, 0.31], [0.122, 0.343], [0.076, 0.363], [0.02, 0.371]];
     const CH_D = 0.66;
-    const tank = addRim(new THREE.MeshToonMaterial({ map: drawTank(1 / (CH.length - 1)), gradientMap: RAMP }), 0.3);
+    const yToV = (y) => { // lathe v (one step per knot) at height y
+      for (let k = 1; k < CH.length; k++) if (y <= CH[k][1]) return (k - 1 + clamp((y - CH[k - 1][1]) / (CH[k][1] - CH[k - 1][1]), 0, 1)) / (CH.length - 1);
+      return 1;
+    };
+    const tank = addRim(new THREE.MeshToonMaterial({ map: drawTank(yToV), gradientMap: RAMP }), 0.3);
     const hairM = addRim(new THREE.MeshToonMaterial({ map: drawHair(), gradientMap: RAMP }), 0.3);
     const mat = this.mat = {
       skin: M(COLORS.skin, 0.32), hair: hairM, tie: M(COLORS.tie, 0.25), shirt: tank,
@@ -486,26 +518,31 @@ export class Climber {
 
     // torso: chest (racerback tank, shoulder blades and lats so the back reads) + pelvis (glutes)
     const chestGeo = latheGeo(CH, CH_D);
-    const blades = [-1, 1].map((s) => {
-      const b = baked(new THREE.SphereGeometry(0.056, 16, 12), { p: [s * 0.074, 0.238, 0.094], r: [0.15, 0, s * -0.25], s: [1, 1.3, 0.38] });
-      // project the tank texture onto the bumps so the cut lines continue across them
+    // project the bra texture onto the bumps so the cut lines continue across them
+    const projectUV = (b) => {
       const P = b.attributes.position, UV = b.attributes.uv;
       for (let i = 0; i < P.count; i++) {
-        const x = P.getX(i), y = P.getY(i), z = P.getZ(i) / CH_D;
-        let u = Math.atan2(x, z) / (Math.PI * 2); if (u < 0) u += 1;
-        let v = 1;
-        for (let k = 1; k < CH.length; k++) if (y <= CH[k][1]) { v = (k - 1 + (y - CH[k - 1][1]) / (CH[k][1] - CH[k - 1][1])) / (CH.length - 1); break; }
-        UV.setXY(i, u, clamp(v, 0, 1));
+        let u = Math.atan2(P.getX(i), P.getZ(i) / CH_D) / (Math.PI * 2); if (u < 0) u += 1;
+        UV.setXY(i, u, clamp(yToV(P.getY(i)), 0, 1));
       }
       return b;
-    });
-    add('chest', merge([chestGeo, ...blades]), mat.shirt);
-    const pelvisGeo = latheGeo([[0.02, -0.13], [0.085, -0.115], [0.125, -0.07], [0.138, 0.0], [0.134, 0.08], [0.127, 0.16], [0.12, 0.21], [0.02, 0.215]], 0.74);
-    const glutes = [-1, 1].map((s) => baked(new THREE.SphereGeometry(0.07, 16, 12), { p: [s * 0.056, -0.04, 0.052], s: [1, 1.05, 0.78] }));
+    };
+    const blades = [-1, 1].map((s) => projectUV(baked(new THREE.SphereGeometry(0.052, 16, 12), { p: [s * 0.07, 0.238, 0.09], r: [0.15, 0, s * -0.25], s: [1, 1.3, 0.38] })));
+    // bust (local -z is the front): teardrop cups, a gentle upper slope into the chest and a full
+    // lower curve, toed out a little
+    const cupGeo = new THREE.SphereGeometry(0.066, 20, 16);
+    { const P = cupGeo.attributes.position;
+      for (let i = 0; i < P.count; i++) { const y = P.getY(i) / 0.066; P.setZ(i, P.getZ(i) * (1 - 0.5 * Math.max(0, y) ** 1.5)); }
+      cupGeo.computeVertexNormals(); }
+    const bust = [-1, 1].map((s) => projectUV(baked(cupGeo, { p: [s * 0.054, 0.21, -0.062], r: [0.1, s * 0.32, 0], s: [1, 0.95, 0.88] })));
+    add('chest', merge([chestGeo, ...blades, ...bust]), mat.shirt);
+    // shorts: wide hips, round glutes, low waistband
+    const pelvisGeo = latheGeo([[0.02, -0.125], [0.09, -0.115], [0.135, -0.07], [0.152, 0.0], [0.146, 0.07], [0.128, 0.14], [0.114, 0.185], [0.02, 0.19]], 0.76);
+    const glutes = [-1, 1].map((s) => baked(new THREE.SphereGeometry(0.077, 18, 14), { p: [s * 0.06, -0.045, 0.056], s: [1, 1.05, 0.84] }));
     add('pelvis', merge([pelvisGeo, ...glutes]), mat.pants);
-    const beltGeo = new THREE.TorusGeometry(0.126, 0.011, 6, 28); beltGeo.rotateX(Math.PI / 2); beltGeo.scale(1, 1, 0.76); beltGeo.translate(0, 0.17, 0);
-    add('belt', beltGeo, mat.belt, { parent: parts.pelvis, outline: false, shadow: false });
-    add('neck', limbGeo(0.048, 0.044, 0.1), mat.skin);
+    const beltGeo = new THREE.TorusGeometry(0.117, 0.012, 6, 28); beltGeo.rotateX(Math.PI / 2); beltGeo.scale(1, 1, 0.78); beltGeo.translate(0, 0.172, 0);
+    add('belt', beltGeo, mat.cuff, { parent: parts.pelvis, outline: false, shadow: false });
+    add('neck', limbGeo(0.042, 0.039, 0.1), mat.skin);
 
     // head group: skull + ears (one mesh), face decal, hair cap + bangs (one mesh)
     const head = this.head = new THREE.Group();
@@ -525,22 +562,26 @@ export class Climber {
     capGeo.rotateX(-0.72); capGeo.scale(1.02, 1.04, 1.0);
     const bangGeo = new THREE.SphereGeometry(0.05, 14, 10); bangGeo.scale(1.25, 0.62, 0.7);
     const bangs = [[-0.058, 0.062, 0.092, 0.4], [0.0, 0.072, 0.098, 0], [0.06, 0.06, 0.09, -0.4]].map(([x, y, z, rz]) => baked(bangGeo, { p: [x, y, z], r: [-0.35, 0, rz] }));
-    add('hairCap', merge([capGeo, ...bangs]), mat.hair, { parent: head });
+    // loose strands framing the face, in front of the ears
+    const lockGeo = new THREE.SphereGeometry(0.05, 12, 10); lockGeo.scale(0.3, 1.45, 0.45);
+    const locks = [-1, 1].map((s) => baked(lockGeo, { p: [s * 0.108, -0.03, 0.068], r: [0.2, 0, s * 0.14] }));
+    add('hairCap', merge([capGeo, ...bangs, ...locks]), mat.hair, { parent: head });
     const tieGeo = new THREE.TorusGeometry(0.034, 0.016, 8, 18);
     this.tieAnchor = new V3(0, 0.07, -0.118);
     add('tie', tieGeo, mat.tie, { outline: false, shadow: false });
     // ponytail: verlet nodes, drawn as one smooth tube through them
-    this.tailN = 6; this.tailSeg = 0.044;
+    this.tailN = 7; this.tailSeg = 0.046;
     for (let i = 0; i < this.tailN; i++) { this.tail.push(new V3()); this.tailPrev.push(new V3()); }
     this.tailPts = [this.tieWorld, ...this.tail];
-    this.tailTube = new Tube(tubeRings([[0, 0.046], [0.18, 0.056], [0.45, 0.05], [0.7, 0.038], [0.9, 0.022], [1, 0.012]], 18, 0.27, () => 0, false, true), 10);
+    this.tailTube = new Tube(tubeRings([[0, 0.048], [0.18, 0.06], [0.45, 0.054], [0.7, 0.04], [0.9, 0.022], [1, 0.012]], 20, 0.32, () => 0, false, true), 10);
     dyn(add('tail', this.tailTube.geo, mat.hair));
 
     // arms: one tapered tube shoulder → wrist (deltoid, bicep, elbow, climber forearm)
     this.armTube = {}; this.legTube = {};
-    const ARM = [[0, 0.056], [0.1, 0.056], [0.3, 0.047], [0.5, 0.035], [0.63, 0.047], [0.85, 0.035], [1, 0.029]];
-    const LEG = [[0, 0.084], [0.2, 0.078], [0.5, 0.053], [0.64, 0.058], [0.8, 0.052], [0.806, 0.061], [0.866, 0.061], [0.872, 0.037], [1, 0.034]];
-    const legMat = (t) => (t < 0.803 ? 0 : t < 0.869 ? 1 : 2);
+    const ARM = [[0, 0.052], [0.1, 0.052], [0.3, 0.043], [0.5, 0.032], [0.63, 0.044], [0.85, 0.032], [1, 0.027]];
+    // shorts hem high on the thigh (red trim), then bare leg: thigh, slim knee, calf, ankle
+    const LEG = [[0, 0.09], [0.09, 0.086], [0.095, 0.088], [0.11, 0.088], [0.115, 0.079], [0.3, 0.069], [0.47, 0.045], [0.53, 0.045], [0.64, 0.051], [0.82, 0.037], [0.92, 0.031], [1, 0.032]];
+    const legMat = (t) => (t < 0.092 ? 0 : t < 0.113 ? 1 : 2);
     const fingGeo = (len, r, offs) => merge([-0.026, -0.0087, 0.0087, 0.026].map((x, i) => baked(new THREE.CapsuleGeometry(r, len, 3, 8), { p: [x, len / 2 + offs[i], 0] })));
     const KNUCKLE = [-0.007, 0.002, 0, -0.01];
     for (const s of ['L', 'R']) {
@@ -995,16 +1036,28 @@ export class Climber {
       _tmpA.copy(right).multiplyScalar(s * 0.55).addScaledVector(up, -0.6).addScaledVector(back, 0.5);
       if (this.mode === 'stand') _tmpA.copy(right).multiplyScalar(s * 0.3).addScaledVector(back, 0.8).addScaledVector(up, -0.2);
       a.lerp(_tmpA, k);
+      // knees flex forward (toward the wall the climber faces, -back) and turn out with the hips.
+      // On holds they open sideways a lot (climbers turn the hips out to keep the knee off the wall).
       const l = s < 0 ? this.pole.lL : this.pole.lR;
       if (this.mode === 'stand') _tmpA.copy(back).multiplyScalar(-0.9).addScaledVector(right, s * 0.25);
       else if (feetOff || (this.mode === 'fall')) _tmpA.copy(back).multiplyScalar(-0.85).addScaledVector(right, s * 0.3);
-      else _tmpA.copy(right).multiplyScalar(s * 0.28).addScaledVector(back, 0.9).addScaledVector(up, -0.1);
+      else _tmpA.copy(right).multiplyScalar(s * 0.7).addScaledVector(back, -0.6).addScaledVector(up, 0.2);
       l.lerp(_tmpA, k);
     }
     ik(J.shL, HLt, BODY.ARM1, BODY.ARM2, this.pole.aL, J.elL, J.hL);
     ik(J.shR, HRt, BODY.ARM1, BODY.ARM2, this.pole.aR, J.elR, J.hR);
-    ik(J.hipL, FLt, BODY.LEG1, BODY.LEG2, this.pole.lL, J.knL, J.ftL);
-    ik(J.hipR, FRt, BODY.LEG1, BODY.LEG2, this.pole.lR, J.knR, J.ftR);
+    for (const s of [-1, 1]) {
+      const hip = s < 0 ? J.hipL : J.hipR, kn = s < 0 ? J.knL : J.knR, ft = s < 0 ? J.ftL : J.ftR;
+      const F = s < 0 ? FLt : FRt, pole = s < 0 ? this.pole.lL : this.pole.lR;
+      ik(hip, F, BODY.LEG1, BODY.LEG2, pole, kn, ft);
+      // a knee that would go into the board swings out to the side (frog), continuously
+      if (this.mode === 'climb' && kn.z < 0.13) {
+        const w = smoothstep((0.13 - kn.z) / 0.1);
+        _tmpA.copy(right).multiplyScalar(s).addScaledVector(back, 0.25).normalize();
+        _tmpB.copy(pole).normalize().lerp(_tmpA, w);
+        ik(hip, F, BODY.LEG1, BODY.LEG2, _tmpB, kn, ft);
+      }
+    }
 
     // head: look target, smoothed
     this.updateHeadFrame(false, dt);
