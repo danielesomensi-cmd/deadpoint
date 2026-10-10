@@ -72,7 +72,7 @@ const JUMP_TO_LAST = `(() => {
 
 const report = { run: RUN, view: VIEW };
 const errors = [];
-const browser = await chromium.launch({ args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist', '--autoplay-policy=no-user-gesture-required'] });
+const browser = await chromium.launch({ ...(process.env.CHROME_PATH ? { executablePath: process.env.CHROME_PATH } : {}), args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist', '--autoplay-policy=no-user-gesture-required'] });
 try {
   const mobile = VIEW === 'mobile';
   const dsf = RUN === 'visual' ? Number(process.env.DSF || 1) : 1;
@@ -134,6 +134,11 @@ try {
     report.log = await ev('__DP.session.log.map(l => [l.g, l.attempts])');
     report.taps = await ev('__bot.taps');
     report.rests = await ev('__bot.rests');
+    // the body is the timing cue: the pelvis must stop rising on the deadpoint (±15 ms)
+    const apexLog = await ev('__DP.apexLog.slice()');
+    const sorted = apexLog.slice().sort((x, y) => x - y);
+    report.apex = { n: apexLog.length, median_ms: sorted.length ? Math.round(sorted[sorted.length >> 1] * 1000) : null, min_ms: Math.round(sorted[0] * 1000), max_ms: Math.round(sorted[sorted.length - 1] * 1000) };
+    if (!apexLog.length || Math.abs(sorted[sorted.length >> 1]) > 0.015) errors.push(`pelvis apex off the deadpoint: ${JSON.stringify(report.apex)}`);
     await ev('__bot.miss = true');
     await page.waitForFunction('__DP.mode === "over"', null, { timeout: 90000 });
     report.over_text = await ev('document.getElementById("overGrade").textContent + " | " + document.getElementById("overSub").textContent');

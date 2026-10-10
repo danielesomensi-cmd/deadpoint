@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="it">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
@@ -22,7 +22,7 @@
 
 <header id="hud" hidden>
   <div class="hud-row">
-    <div class="chip"><span class="g" id="hudGrade">4 · V0</span><span class="a" id="hudAngle">20°</span></div>
+    <div class="chip"><span class="g" id="hudGrade">4</span><span class="a" id="hudAngle">20°</span></div>
     <div id="tries" aria-label="Tentativi" data-i18n-aria="ariaTries"><i></i><i></i><i></i></div>
     <div class="score"><span id="hudScore">0</span><span id="hudCombo"></span></div>
     <button id="btnPause" aria-label="Pausa" data-i18n-aria="ariaPause"><svg viewBox="0 0 16 16"><rect x="3" y="2" width="3.5" height="12" rx="1"/><rect x="9.5" y="2" width="3.5" height="12" rx="1"/></svg></button>
@@ -51,14 +51,14 @@
     </div>
     <ol class="how">
       <li><span data-i18n="how1"><b>Tocca</b> per lanciarti verso la presa illuminata.</span></li>
-      <li><span data-i18n="how2"><b>Tocca di nuovo quando il cursore entra in ORA</b>, la zona bianca della barra in basso. <small>Tic, tic, TAC: si tocca sul TAC. Perfetto = meno fatica.</small></span></li>
+      <li><span data-i18n="how2"><b>Guarda la scalatrice</b>: carica due volte, spinge, e <b>tocca quando si ferma in alto</b> con la mano aperta sulla presa. <small>Tic, tic, TAC: si tocca sul TAC. Perfetto = meno fatica.</small></span></li>
       <li><span data-i18n="how3"><b>Tieni premuto</b> sulle prese buone per scuotere le braccia. <small>Sulle tacchette non si recupera.</small></span></li>
     </ol>
     <div class="seg-label" data-i18n="startFrom">Parti da</div>
     <div class="seg" id="startSeg">
-      <button id="sg0" data-g="0" aria-pressed="true">4<small>V0 · 20°</small></button>
-      <button id="sg3" data-g="3" aria-pressed="false">6A+<small>V3 · 35°</small></button>
-      <button id="sg6" data-g="6" aria-pressed="false">7A<small>V6 · 45°</small></button>
+      <button id="sg0" data-g="0" aria-pressed="true">4<small>20°</small></button>
+      <button id="sg3" data-g="3" aria-pressed="false">6a+<small>35°</small></button>
+      <button id="sg6" data-g="6" aria-pressed="false">7a<small>45°</small></button>
     </div>
     <button class="btn" id="btnStart" data-i18n="btnStart">Inizia sessione</button>
     <div class="meta" id="recordLine">Tre tentativi per blocco. Meglio con l'audio.</div>
@@ -79,9 +79,9 @@
     </div>
     <div class="seg-label" data-i18n="restartFrom">Riparti da</div>
     <div class="seg" id="overSeg">
-      <button id="og0" data-g="0" aria-pressed="true">4<small>V0 · 20°</small></button>
-      <button id="og3" data-g="3" aria-pressed="false">6A+<small>V3 · 35°</small></button>
-      <button id="og6" data-g="6" aria-pressed="false">7A<small>V6 · 45°</small></button>
+      <button id="og0" data-g="0" aria-pressed="true">4<small>20°</small></button>
+      <button id="og3" data-g="3" aria-pressed="false">6a+<small>35°</small></button>
+      <button id="og6" data-g="6" aria-pressed="false">7a<small>45°</small></button>
     </div>
     <button class="btn" id="btnAgain" data-i18n="btnAgain">Nuova sessione</button>
   </div>

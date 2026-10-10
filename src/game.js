@@ -13,6 +13,7 @@ const LOCK = TEST && !!window.__DP_LOCKSTEP; // test-only: fixed 1/60 s per fram
 const TQ = (TEST && window.__DP_Q) || null;  // test-only quality override {tier, dpr, noRender}
 const deg = (d) => (d * Math.PI) / 180;
 const easeInOut = (x) => (x < 0.5 ? 2 * x * x : 1 - Math.pow(-2 * x + 2, 2) / 2);
+const smoothstep = (x) => { x = clamp(x, 0, 1); return x * x * (3 - 2 * x); };
 const easeOutBack = (x) => { const c1 = 1.9, c3 = c1 + 1; return 1 + c3 * Math.pow(x - 1, 3) + c1 * Math.pow(x - 1, 2); };
 
 const Q_TEXT = { perfect: t('perfect'), good: t('good'), ok: t('ok') };
@@ -36,6 +37,7 @@ export function startGame() {
   let world;
   const coarse = window.matchMedia && matchMedia('(pointer: coarse)').matches;
   let tierIdx = TIERS.indexOf((TQ && TQ.tier) || (coarse ? 'mid' : 'high'));
+  sfx.tier = TIERS[tierIdx]; // before sfx.init(): the score drops layers on the low tier
   try {
     world = createWorld({
       canvas: $('scene'), holds: BOARD_HOLDS, quality: TIERS[tierIdx],
@@ -59,11 +61,16 @@ export function startGame() {
   let shakeAmp = 0, fovPunch = 0;
   let W = 1, H = 1;
   let feetOff = false, feetBackAt = 0, topT0 = 0, fallEndAt = Infinity;
-  // timing aids: bottom meter, countdown beats, slow-motion while learning
+  // timing aids: the body is the metronome (rock, rock, drive, apex), countdown beats on the rocks,
+  // a glint + hand flash at the deadpoint, slow motion (and a first-time freeze) while learning
   let timeScale = 1;
   let tutorialLeft = store.get('tutorial', 3); // good/perfect catches still needed before slow-mo stops
-  const meter = { src: null, last: null };
+  const TEACH = !TEST || !!window.__DP_TEACH;  // first catch ever: time stops at the apex until the tap
+  let teachHold = false;
+  let hitstop = 0, snapUntil = 0;
   const beat = { key: -1, next: 0 };
+  const cue = { key: -1, drive: false, hush: false };
+  const apex = { key: -1, dp: 0, y: 0, t: 0, last: 0, log: [] }; // test: when the pelvis stops rising vs the deadpoint
   let timers = [];
   let fade = null;
   const demo = new Session({ board: BOARD_HOLDS, startGrade: 6, seed: 4242 });
@@ -96,6 +103,59 @@ export function startGame() {
     const w0 = u * u * u, w1 = 3 * u * u * e, w2 = 3 * u * e * e, w3 = e * e * e;
     return out.set(w0 * a.x + w1 * c1x + w2 * c2x + w3 * b.x, w0 * a.y + w1 * c1y + w2 * c2y + w3 * b.y, w0 * a.z + w1 * c1z + w2 * c2z + w3 * b.z);
   }
+  // Deadpoint grammar, on the phase p of a timed move (0 = tap, 1 = deadpoint), beats at 1/3, 2/3, 1:
+  //   ROCK 1 (bottom at 1/3, tic) → rebound → ROCK 2 (deepest at 2/3, tic) → DRIVE (hand lets go)
+  //   → RISE: a parabola with zero velocity exactly at p = 1, the weightless apex (TAC).
+  // The hips are springs (stiffer in flight), so the curve is sampled LEAD seconds ahead to put their
+  // apex on the deadpoint (checked by the e2e flow test: median within 15 ms).
+  const DRIVE = 2 / 3, LEAD = 0.12, FLIGHT_STIFF = 3.5;
+  const _sinkP = new V3(), _sinkS = new V3();
+  function bodyCurve(p, amp) {
+    let s = 0, r = 0;
+    if (p <= 0) return;
+    if (p < 1 / 3) s = 0.64 * easeInOut(p * 3);
+    else if (p < 0.5) s = 0.64 - 0.38 * easeInOut((p - 1 / 3) * 6);
+    else if (p < DRIVE) s = 0.26 + 0.74 * easeInOut((p - 0.5) * 6);
+    else { const u = (p - DRIVE) * 3; r = Math.max(-0.4, 1 - (1 - u) * (1 - u)); s = 1 - r; }
+    const g = climber.g;
+    // sink: down along gravity and away from the wall (arms straighten, knees bend)
+    _sinkP.copy(g).multiplyScalar(0.11).addScaledVector(NRM, 0.1);
+    _sinkS.copy(g).multiplyScalar(0.08).addScaledVector(NRM, 0.06);
+    CT.driveP.addScaledVector(_sinkP, s * amp).addScaledVector(BUP, 0.12 * r * amp).addScaledVector(NRM, -0.09 * r * amp);
+    CT.driveS.addScaledVector(_sinkS, s * amp).addScaledVector(BUP, 0.07 * r * amp).addScaledVector(NRM, -0.04 * r * amp);
+  }
+  // the reaching hand: stays on its hold through the rocks, shoots out at the drive, slows to a hover
+  // just short of the hold and settles on it exactly at p = 1. Past the deadpoint it slides off.
+  function reachHand(out, from, to, p, lift) {
+    const u = (p - DRIVE) * 3;
+    if (u <= 0) { out.copy(from); return; }
+    tC.subVectors(from, to); tC.z = 0;
+    const l = tC.length();
+    if (l > 1e-4) tC.multiplyScalar(0.025 / l);
+    lookV.copy(to).add(tC).addScaledVector(NRM, 0.035); // hover point, ~3-4 cm short
+    // fast out of the drive (ease-out), the last 3-4 cm settle onto the hold exactly at p = 1,
+    // when the whole body stops: hand, shoulders and hips come to rest together on the deadpoint
+    if (u <= 1) {
+      arcPath(out, from, lookV, Math.min(1, 1 - Math.pow(1 - u / 0.92, 2)), lift);
+      out.addScaledVector(tC.subVectors(to, lookV), smoothstep((u - 0.8) / 0.2));
+    } else out.copy(to).addScaledVector(climber.g, (u - 1) * 0.3).addScaledVector(NRM, (u - 1) * 0.1);
+  }
+  // the shoulders aim at the midpoint of the hands: feed them the reaching hand's path LEAD seconds
+  // ahead too, so the body's springs settle on the deadpoint instead of trailing the hand
+  const _hl = new V3(), _hn = new V3();
+  function leadHand(from, to, pL, p, lift) {
+    if (pL <= DRIVE) return;
+    reachHand(_hl, from, to, Math.min(pL, 1), lift);
+    reachHand(_hn, from, to, Math.min(p, 1), lift); // where the hand is now (`from` before the drive)
+    CT.driveS.addScaledVector(_hl.sub(_hn), 0.5);
+  }
+  const splayAt = (p) => { const u = (p - DRIVE) * 3; return u <= 1 ? smoothstep((u - 0.72) / 0.18) : Math.max(0, 1 - (u - 1) * 4); };
+  // flash intensity: builds over the good window before the deadpoint, peaks on it, fades in ~120 ms
+  const cueAt = (tt, dp, wg) => (tt < dp - wg ? 0 : tt <= dp ? smoothstep((tt - dp + wg) / wg) : Math.exp(-(tt - dp) / 0.12));
+  const floatAt = (p, tt, dp) => { const u = (p - DRIVE) * 3; return u < 1 ? smoothstep((u - 0.5) / 0.4) : Math.max(0, 1 - (tt - dp) / 0.25); };
+  const setSplay = (side, v) => { if (side === 'L') CT.splayL = v; else CT.splayR = v; };
+  const setFlash = (side, v) => { if (side === 'L') CT.flashL = v; else CT.flashR = v; };
+
   function driveClimber() {
     const A = attempt;
     if (!A) return;
@@ -108,6 +168,8 @@ export function startGame() {
     if (feetBackAt && simT >= feetBackAt) { feetBackAt = 0; feetOff = false; climber.E.FL.speed = climber.E.FR.speed = 0.6; }
     CT.feetOn = !feetOff;
     CT.driveS.set(0, 0, 0); CT.driveP.set(0, 0, 0); CT.stiff = 1; CT.lookBack = false;
+    CT.splayL = CT.splayR = CT.flashL = CT.flashR = CT.flashF = CT.tailFloat = CT.feetSwing = 0;
+    CT.gripRate = simT < snapUntil ? 40 : 18; CT.hipDrive = false;
     const nm = A.nextMove();
     CT.look = nm ? gripPos(nm.to, lookV) : null;
     let expr = A.energy < 30 ? 'effort' : A.energy < 55 ? 'focus' : 'calm';
@@ -125,23 +187,20 @@ export function startGame() {
         const f = A.flight, mv = f.mv;
         const p = (simT - f.t0) / f.T;
         const Hh = mv.hand === 'L' ? CT.HL : CT.HR;
-        tA.copy(Hh);
-        gripPos(mv.to, tB);
-        // the hand decelerates into the hold: velocity ~0 exactly at the deadpoint (p = 1)
-        const e = p <= 1 ? 1 - Math.pow(1 - clamp(p, 0, 1), 1.6) : 1;
-        arcPath(Hh, tA, tB, e, mv.dyno ? 0.1 : 0.14);
-        if (p > 1) Hh.addScaledVector(g, (p - 1) * 0.9).addScaledVector(NRM, (p - 1) * 0.3);
-        setHand(mv.hand, true);
-        // body: quick sink (load), then hips drive up and into the wall, apex at the deadpoint
-        const k = p <= 1 ? 1 - Math.pow(1 - clamp(p, 0, 1), 2) : Math.max(0, 1 - (p - 1) * 3);
-        const dip = p < 0.14 ? Math.sin((Math.PI * Math.max(0, p)) / 0.14) : 0;
-        const amp = mv.dyno ? 1.5 : 1;
-        CT.driveS.addScaledVector(BUP, 0.05 * k * amp).addScaledVector(NRM, -0.03 * k * amp).addScaledVector(g, 0.035 * dip);
-        CT.driveP.addScaledVector(BUP, 0.09 * k * amp).addScaledVector(NRM, -0.09 * k * amp).addScaledVector(g, 0.06 * dip);
-        CT.stiff = 1.5;
-        if (mv.dyno && p > 0.3) CT.feetOn = false;
+        bodyCurve((simT + LEAD - f.t0) / f.T, mv.dyno ? 1.5 : 1);
+        CT.stiff = FLIGHT_STIFF;
+        tA.copy(Hh); gripPos(mv.to, tB);
+        leadHand(tA, tB, (simT + LEAD - f.t0) / f.T, p, mv.dyno ? 0.1 : 0.14);
+        if (p >= DRIVE) {
+          reachHand(Hh, tA, tB, p, mv.dyno ? 0.1 : 0.14);
+          setHand(mv.hand, true);
+          setSplay(mv.hand, splayAt(p));
+          if (mv.dyno) { CT.feetOn = false; CT.hipDrive = true; }
+        }
+        setFlash(mv.hand, cueAt(simT, f.dp, f.w.good));
+        CT.tailFloat = floatAt(p, simT, f.dp);
         CT.look = gripPos(mv.to, lookV);
-        expr = mv.dyno ? 'effort' : 'focus';
+        expr = p > 1.04 ? 'ouch' : p >= DRIVE && mv.dyno ? 'effort' : 'focus';
         break;
       }
       case 'match': {
@@ -151,14 +210,19 @@ export function startGame() {
         Fh.x += fin.hand === 'L' ? -0.06 : 0.06;
         const Ho = other === 'L' ? CT.HL : CT.HR;
         const pm = (simT - m.t0) / m.T;
-        if (pm > 0) {
-          tA.copy(Ho);
-          gripPos(fin.to, tB); tB.x += other === 'L' ? -0.06 : 0.06;
-          const e = pm <= 1 ? 1 - Math.pow(1 - pm, 1.6) : 1;
-          arcPath(Ho, tA, tB, e, 0.1);
-          if (pm > 1) Ho.addScaledVector(g, (pm - 1) * 0.5);
+        // same grammar, smaller: two little rocks, the free hand rides a short hip rise to the top
+        bodyCurve((simT + LEAD - m.t0) / m.T, 0.5);
+        CT.stiff = FLIGHT_STIFF;
+        tA.copy(Ho);
+        gripPos(fin.to, tB); tB.x += other === 'L' ? -0.06 : 0.06;
+        leadHand(tA, tB, (simT + LEAD - m.t0) / m.T, pm, 0.1);
+        if (pm >= DRIVE) {
+          reachHand(Ho, tA, tB, pm, 0.1);
           setHand(other, true);
+          setSplay(other, splayAt(pm));
         }
+        setFlash(other, cueAt(simT, m.dp, m.w.good));
+        CT.tailFloat = floatAt(pm, simT, m.dp);
         CT.look = gripPos(fin.to, lookV);
         expr = 'focus';
         break;
@@ -174,11 +238,18 @@ export function startGame() {
         expr = 'rest';
         break;
       }
-      case 'feet':
+      case 'feet': {
+        // feet cut: the legs swing out like a pendulum, turn at mid-time and come back to the wall
+        // exactly on the deadpoint (sampled ahead: the dangling feet are soft springs)
+        const ft = A.feet, T = ft.dp - ft.t0;
+        const pf = (simT + 0.12 - ft.t0) / T;
         CT.feetOn = false;
+        CT.feetSwing = 0.26 * Math.abs(Math.sin(Math.PI * clamp(pf, 0, 2)));
+        CT.flashF = cueAt(simT, ft.dp, ft.w.good);
         CT.look = footPos(st.FL, lookV);
         expr = 'effort';
         break;
+      }
     }
     climber.setExpr(expr);
   }
@@ -296,7 +367,7 @@ export function startGame() {
     $('overEyebrow').textContent = session.completed ? t('boardCleared') : t('sessionOver');
     $('overGrade').textContent = best >= 0 ? GRADES[best].f : '—';
     $('overSub').textContent = best >= 0
-      ? t('topGrade', GRADES[best].f, GRADES[best].v, gradeParams(best).angle) + (newRecord ? t('newRecord') : '')
+      ? t('topGrade', GRADES[best].f, gradeParams(best).angle) + (newRecord ? t('newRecord') : '')
       : t('noSends');
     $('overSends').innerHTML = session.log.map((l) => `<span class="${l.attempts === 1 ? 'fl' : ''}" title="${l.attempts === 1 ? 'Flash' : t('attemptsN', l.attempts)}">${GRADES[l.g].f}<small>${l.attempts === 1 ? 'flash' : t('attemptShort', l.attempts)}</small></span>`).join('');
     $('overScore').textContent = fmt(session.score);
@@ -349,17 +420,19 @@ export function startGame() {
     const g = climber.g;
     for (const e of evs) {
       switch (e.type) {
-        case 'launch':
-          sfx.launch(e.mv.dyno, e.T);
-          break;
+        case 'launch': break; // the whoosh starts at the drive (see moveCues), not on the tap
         case 'catch': {
           noteTiming(e.off, e.q);
           const h = HOLD_BY_ID[e.mv.to];
           sfx.catchHold(e.q, e.combo, h.type);
           const pos = gripPos(e.mv.to, new V3());
           popup(pos, Q_TEXT[e.q], e.q === 'perfect' ? (e.combo >= 2 ? `×${e.combo}` : '') : timingNote(e.off), Q_COLOR[e.q], e.q === 'perfect' ? 1.15 : 0.95);
-          bursts.push({ pos, t0: simT, color: e.q === 'perfect' ? ROLE_HEX[e.mv.finish ? 'finish' : 'hand'] : Q_COLOR[e.q], big: e.q === 'perfect' });
+          // white/amber only: an LED-coloured ring on the hold reads as an LED (see CLAUDE.md)
+          bursts.push({ pos, t0: simT, color: e.q === 'ok' ? Q_COLOR.ok : '#ffffff', big: e.q === 'perfect' });
           world.puff(pos, e.q === 'perfect' ? 9 : 6, e.q === 'ok' ? 1.3 : 1);
+          climber.flash(e.mv.hand, e.q === 'perfect' ? 1 : 0.5);
+          // perfect: the hand snaps shut and time sticks for a few frames (hitstop)
+          if (e.q === 'perfect') { snapUntil = simT + 0.2; hitstop = 0.06; }
           // the catch loads the arms: the body sags and swings, more on a sloppy catch
           const sag = e.q === 'perfect' ? 0.35 : e.q === 'good' ? 0.7 : 1.3;
           tA.copy(g).multiplyScalar(sag);
@@ -375,6 +448,8 @@ export function startGame() {
         case 'miss': {
           noteTiming(e.off, 'miss');
           sfx.miss(e.reason);
+          // too early: the hand closes into a fist in the air, short of the hold
+          if (e.reason === 'early' && e.mv) climber.grip[e.mv.hand] = 1;
           const pos = e.mv ? gripPos(e.mv.to, new V3()) : climber.J.hR.clone();
           popup(pos, e.reason === 'early' ? t('tooEarly') : t('tooLate'), `${Math.round(Math.abs(e.off) * 1000)} ms`, Q_COLOR.miss, 1);
           vibrate(40);
@@ -399,7 +474,10 @@ export function startGame() {
           feetOff = false;
           climber.E.FL.speed = climber.E.FR.speed = 0.45;
           const f = attempt.P.stances[attempt.stanceIdx].FL;
-          popup(footPos(f, new V3()), e.q === 'perfect' ? t('feetBang') : t('feet'), e.q === 'perfect' ? '' : timingNote(e.off), Q_COLOR[e.q], 0.8);
+          const fp = footPos(f, new V3());
+          popup(fp, e.q === 'perfect' ? t('feetBang') : t('feet'), e.q === 'perfect' ? '' : timingNote(e.off), Q_COLOR[e.q], 0.8);
+          world.puff(fp, e.q === 'perfect' ? 8 : 5, 0.8);
+          climber.flash('F', e.q === 'perfect' ? 1 : 0.5);
           climber.kick(tA.copy(g).multiplyScalar(0.25), 0.2);
           if (e.combo >= TUNE.flowCombo) sfx.setLevel(2);
           break;
@@ -452,7 +530,6 @@ export function startGame() {
     }
   }
   function noteTiming(off, q) {
-    if (meter.src) meter.last = { src: meter.src, off, q, at: simT };
     if (tutorialLeft > 0 && (q === 'perfect' || q === 'good')) {
       tutorialLeft--;
       store.set('tutorial', tutorialLeft);
@@ -472,9 +549,9 @@ export function startGame() {
     flashEl.style.transition = 'none'; flashEl.style.opacity = String(o);
     requestAnimationFrame(() => { flashEl.style.transition = 'opacity .28s ease-out'; flashEl.style.opacity = '0'; });
   }
+  // popups stay attached to their spot on the board (re-projected every frame as the camera moves)
   function popup(localPos, text, sub, color, scale) {
-    const p = projectLocal(localPos);
-    popups.push({ x: p.x, y: p.y - 34, text, sub, color, scale, t0: simT });
+    popups.push({ pos: localPos.clone(), text, sub, color, scale, t0: simT });
   }
   const costLayer = $('costLayer');
   function costFloat(v) {
@@ -494,31 +571,50 @@ export function startGame() {
     if (!A || mode !== 'climb' || A.done) return null;
     if (A.state === 'flight' && A.flight) {
       const mv = A.flight.mv;
-      return { key: A.flight.t0, t0: A.flight.t0, dp: A.flight.dp, w: A.flight.w, color: ROLE_HEX[mv.finish ? 'finish' : 'hand'] };
+      return { kind: 'flight', key: A.flight.t0, t0: A.flight.t0, dp: A.flight.dp, w: A.flight.w, mv, hand: mv.hand, from: mv.hand === 'L' ? A.L : A.R };
     }
-    if (A.state === 'feet' && A.feet) return { key: A.feet.t0, t0: A.feet.t0, dp: A.feet.dp, w: A.feet.w, color: ROLE_HEX.foot };
-    if (A.state === 'match' && A.match) return { key: A.match.t0, t0: A.match.t0, dp: A.match.dp, w: A.match.w, color: ROLE_HEX.finish };
+    if (A.state === 'feet' && A.feet) return { kind: 'feet', key: A.feet.t0, t0: A.feet.t0, dp: A.feet.dp, w: A.feet.w };
+    if (A.state === 'match' && A.match) {
+      const fin = A.P.moves[A.P.moves.length - 1], other = fin.hand === 'L' ? 'R' : 'L';
+      return { kind: 'match', key: A.match.t0, t0: A.match.t0, dp: A.match.dp, w: A.match.w, hand: other, from: other === 'L' ? A.L : A.R };
+    }
     return null;
   }
-  // tic, tic, TAC: the TAC lands exactly on the deadpoint
+  // tic, tic, TAC on an even count from the tap (beat 0): the tics land on the bottoms of the two
+  // rocks, the TAC exactly on the deadpoint (the apex). The second tic carries a short exhale (the drive).
   function scheduleBeats(src) {
     if (!src) return;
     if (beat.key !== src.key) { beat.key = src.key; beat.next = 0; }
-    const b = clamp((src.dp - src.t0) / 3, 0.14, 0.28);
-    const times = [src.dp - 2 * b, src.dp - b, src.dp];
+    const b = (src.dp - src.t0) / 3;
+    const times = [src.t0 + b, src.t0 + 2 * b, src.dp];
     while (beat.next < 3) {
       const bt = times[beat.next];
       const lead = (bt - simT) / Math.max(0.05, timeScale);
       if (bt < src.t0 + 0.03 || lead < -0.03) { beat.next++; continue; }
       if (lead > 0.12) break;
       sfx.tick(beat.next === 2, Math.max(0, lead));
+      if (beat.next === 1 && sfx.ctx && !(src.mv && src.mv.dyno)) sfx.grunt(sfx.ctx.currentTime + Math.max(0, lead) + 0.004, 1.12, 0.05, 0.16);
       beat.next++;
     }
+  }
+  // one-shot cues of a timed move: at the drive the hand lets go (chalk puff, whoosh that builds
+  // through the rise), and 40 ms before the deadpoint the whoosh cuts: silence, then the TAC
+  function moveCues(src) {
+    if (!src || src.kind === 'feet') return;
+    if (cue.key !== src.key) { cue.key = src.key; cue.drive = false; cue.hush = false; }
+    const T = src.dp - src.t0;
+    if (!cue.drive && simT >= src.t0 + T * DRIVE) {
+      cue.drive = true;
+      const realLeft = (src.dp - simT) / (tutorialLeft > 0 ? 0.4 : 1);
+      sfx.launch(!!(src.mv && src.mv.dyno), Math.max(0.1, realLeft - 0.04));
+      if (src.from != null) world.puff(gripPos(src.from, new V3()), 4, 0.5);
+    }
+    if (!cue.hush && simT >= src.dp - 0.04) { cue.hush = true; sfx.stopWhoosh(); }
   }
 
   // ===================== Camera =====================
   const camFocus = new V3(0, 2, 1), camPos = new V3(0, 1.4, 5), focusTarget = new V3(), camDesired = new V3(), tmp = new V3(), tmp2 = new V3();
-  let camInit = false;
+  let camInit = false, camSide = 1, camOrbit = 0;
   function updateCamera(dt, now) {
     const th = deg(world.angle), s = Math.sin(th);
     const portrait = W / H < 0.85;
@@ -536,13 +632,26 @@ export function startGame() {
       else {
         tmp.copy(climber.S);
         const nm = attempt && attempt.nextMove();
-        if (nm && mode === 'climb') { gripPos(nm.to, tmp2); tmp.lerp(tmp2, 0.45); }
-        tmp.y = Math.min(tmp.y + 0.22, BOARD_H - 0.8);
+        if (nm && mode === 'climb') { gripPos(nm.to, tmp2); tmp.lerp(tmp2, 0.4); }
+        tmp.y = Math.min(tmp.y - 0.05, BOARD_H - 0.9);
       }
       wall.localToWorld(focusTarget.copy(tmp));
       if (climber.mode === 'stand' || climber.mode === 'fall') focusTarget.y = Math.max(focusTarget.y, MAT_TOP + 1.0);
-      const dist = portrait ? 3.45 : 3.55;
-      camDesired.set(focusTarget.x * 0.55, Math.max(MAT_TOP + 0.6, focusTarget.y - 0.3 - 0.95 * s), focusTarget.z + dist - 1.0 * s);
+      // far enough back that the whole body, the target hold and some board fit a portrait phone
+      const dist = portrait ? 4.25 : 3.95;
+      camDesired.set(focusTarget.x * 0.55, Math.max(MAT_TOP + 0.9, focusTarget.y - 0.15 - 0.75 * s), focusTarget.z + dist - 1.0 * s);
+      // learning slow motion: dolly in and orbit to a 3/4 side view, on the side away from the
+      // reaching hand, so the hips' sink-and-drive toward the wall is visible
+      const src = activeTiming();
+      if (src && src.hand) camSide = src.hand === 'L' ? 1 : -1;
+      camOrbit += ((tutorialLeft > 0 && timeScale < 0.9 ? 1 : 0) - camOrbit) * (1 - Math.exp(-dt * 3));
+      if (camOrbit > 0.001) {
+        const a = deg(32) * camOrbit * camSide;
+        const dx = camDesired.x - focusTarget.x, dz = camDesired.z - focusTarget.z;
+        const k = 1 - 0.22 * camOrbit;
+        camDesired.x = focusTarget.x + (dx * Math.cos(a) + dz * Math.sin(a)) * k;
+        camDesired.z = focusTarget.z + (-dx * Math.sin(a) + dz * Math.cos(a)) * k;
+      }
     }
     if (!camInit) { camFocus.copy(focusTarget); camPos.copy(camDesired); camInit = true; }
     camFocus.lerp(focusTarget, 1 - Math.exp(-dt * 4.5));
@@ -578,93 +687,70 @@ export function startGame() {
   }
   const FONT_D = '"Big Shoulders Display", "Arial Narrow", sans-serif';
   const FONT_U = '"Barlow Semi Condensed", "Segoe UI", sans-serif';
-  function mixHex(h1, h2, k) {
-    const a = parseInt(h1.slice(1), 16), b = parseInt(h2.slice(1), 16);
-    const r = Math.round(((a >> 16) & 255) * (1 - k) + ((b >> 16) & 255) * k);
-    const gg = Math.round(((a >> 8) & 255) * (1 - k) + ((b >> 8) & 255) * k);
-    const bl = Math.round((a & 255) * (1 - k) + (b & 255) * k);
-    return `rgb(${r},${gg},${bl})`;
-  }
-  function hexA(hex, a) {
-    const n = parseInt(hex.slice(1), 16);
-    return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
-  }
-  function rrect(ctx, x, y, w, h, r) {
-    ctx.beginPath();
-    if (ctx.roundRect) ctx.roundRect(x, y, w, h, r); else ctx.rect(x, y, w, h);
-  }
   const outlined = (ctx, text, x, y, fill, lw = 5) => { ctx.lineWidth = lw; ctx.strokeStyle = 'rgba(0,0,0,0.65)'; ctx.strokeText(text, x, y); ctx.fillStyle = fill; ctx.fillText(text, x, y); };
-  // marker on the target hold: a white ring that closes onto it exactly at the deadpoint
-  function drawRing(local, src, label, sub) {
+  // label under the target (hold type, LANCIO): no ring, no meter. The timing lives on the body.
+  function drawLabel(local, label, sub) {
     const P = projectLocal(local);
     if (P.z > 1) return;
-    const r0 = Math.max(18, screenRadius(local, 0.1));
-    const p = (simT - src.t0) / (src.dp - src.t0);
-    if (p < 0) return;
+    const r0 = Math.max(16, screenRadius(local, 0.09));
     const ctx = fxc;
-    const inWin = Math.abs(simT - src.dp) <= src.w.good;
-    const r = p <= 1 ? r0 * (1 + 2.2 * (1 - p)) : r0 * Math.max(0.4, 1 - (p - 1) * 2);
-    ctx.globalAlpha = clamp(p * 4, 0, 1) * (p > 1 ? Math.max(0, 1 - (p - 1) * 2.5) : 1);
-    if (inWin) { ctx.fillStyle = 'rgba(255,255,255,0.5)'; ctx.beginPath(); ctx.arc(P.x, P.y, r0 * 1.02, 0, Math.PI * 2); ctx.fill(); }
-    ctx.lineWidth = 9; ctx.strokeStyle = 'rgba(0,0,0,0.55)';
-    ctx.beginPath(); ctx.arc(P.x, P.y, r, 0, Math.PI * 2); ctx.stroke();
-    ctx.lineWidth = 4.5; ctx.strokeStyle = '#ffffff';
-    ctx.beginPath(); ctx.arc(P.x, P.y, r, 0, Math.PI * 2); ctx.stroke();
-    ctx.globalAlpha = 1;
-    ctx.textAlign = 'center';
-    if (inWin) { ctx.textBaseline = 'bottom'; ctx.font = `900 30px ${FONT_D}`; outlined(ctx, t('nowBang'), P.x, P.y - r0 - 8, '#ffffff', 6); }
-    if (label) {
-      ctx.textBaseline = 'top';
-      ctx.font = `800 15px ${FONT_U}`; outlined(ctx, label, P.x, P.y + r0 + 8, '#ffffff', 4);
-      if (sub) { ctx.font = `800 13px ${FONT_U}`; outlined(ctx, sub, P.x, P.y + r0 + 26, ROLE_HEX.foot, 4); }
-    }
+    ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+    ctx.font = `800 15px ${FONT_U}`; outlined(ctx, label, P.x, P.y + r0 + 6, '#ffffff', 4);
+    if (sub) { ctx.font = `800 13px ${FONT_U}`; outlined(ctx, sub, P.x, P.y + r0 + 24, '#ffffff', 4); }
   }
-  // the timing meter: the cursor runs left to right and hits the white ORA zone at the deadpoint
-  const Q_SHORT = { perfect: t('perfect'), good: t('good'), ok: t('ok'), miss: t('miss') };
-  function drawMeter(src, result) {
+  // deadpoint glint: a white 4-point sparkle with a dark outline on the top edge of the target.
+  // Not a circle or a ring (LEDs are glows) and not an LED colour; readable on pale holds too.
+  function drawGlint(local, k) {
+    if (k < 0.02) return;
+    const P = projectLocal(local);
+    if (P.z > 1) return;
+    const R = Math.max(14, screenRadius(local, 0.07)) * (0.55 + 0.6 * k), r = R * 0.22;
     const ctx = fxc;
-    const w = Math.min(W - 48, 440), h = 22;
-    const x = (W - w) / 2, y = H - safeBottom - 152;
-    const c = src.dp - src.t0;
-    const span = Math.max(0.2, c / 0.78);
-    const X = (sec) => x + w * clamp(sec / span, 0, 1);
-    const fadeK = result ? clamp(1 - (simT - result.at - 0.45) / 0.3, 0, 1) : 1;
-    ctx.globalAlpha = fadeK;
-    ctx.fillStyle = 'rgba(8,10,15,0.8)'; rrect(ctx, x - 3, y - 3, w + 6, h + 6, 13); ctx.fill();
-    ctx.lineWidth = 1.5; ctx.strokeStyle = 'rgba(239,233,220,0.3)'; ctx.stroke();
-    const zone = (half, fill) => { const a = X(c - half), b = X(c + half); ctx.fillStyle = fill; ctx.fillRect(a, y + 2, Math.max(3, b - a), h - 4); };
-    zone(src.w.ok, 'rgba(255,176,46,0.55)');
-    zone(src.w.good, hexA(src.color, 0.9));
-    zone(src.w.perfect, '#ffffff');
-    ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
-    ctx.font = `900 16px ${FONT_D}`; outlined(ctx, t('now'), X(c), y - 6, '#ffffff', 4);
-    if (!result) {
-      const mx = X(simT - src.t0);
-      ctx.fillStyle = 'rgba(0,0,0,0.7)'; ctx.fillRect(mx - 4.5, y - 9, 9, h + 18);
-      ctx.fillStyle = '#ffffff'; ctx.fillRect(mx - 2.5, y - 7, 5, h + 14);
-    } else {
-      const tx = X(c + clamp(result.off, -c, span - c));
-      const col = result.q === 'miss' ? Q_COLOR.miss : Q_COLOR[result.q];
-      ctx.fillStyle = 'rgba(0,0,0,0.7)'; ctx.fillRect(tx - 4.5, y - 9, 9, h + 18);
-      ctx.fillStyle = col; ctx.fillRect(tx - 2.5, y - 7, 5, h + 14);
-      ctx.textBaseline = 'top'; ctx.font = `800 14px ${FONT_U}`;
-      const offMs = Math.abs(Math.round(result.off * 1000));
-      const note = result.q === 'perfect' ? t('perfect') : `${Q_SHORT[result.q]} · ${result.off < 0 ? t('early', offMs) : t('late', offMs)}`;
-      outlined(ctx, note, clamp(tx, x + 70, x + w - 70), y + h + 8, col, 4);
+    ctx.save();
+    ctx.translate(P.x, P.y); ctx.rotate(0.12 + simT * 0.6);
+    ctx.beginPath();
+    for (let i = 0; i < 8; i++) {
+      const a = (i * Math.PI) / 4, rr = i % 2 ? r : R;
+      ctx.lineTo(Math.sin(a) * rr, -Math.cos(a) * rr);
+    }
+    ctx.closePath();
+    ctx.globalAlpha = clamp(k * 1.4, 0, 1);
+    ctx.lineJoin = 'round'; ctx.lineWidth = 4; ctx.strokeStyle = 'rgba(12,10,8,0.85)'; ctx.stroke();
+    ctx.fillStyle = '#ffffff'; ctx.fill();
+    ctx.restore();
+    ctx.globalAlpha = 1;
+  }
+  // learning overlay, anchored on the climber: "1", "2" at the hips on the tics, then the rule
+  // during the rise, then "TOCCA ORA!" above the open hand
+  function drawCoach(src) {
+    const ctx = fxc;
+    const T = src.dp - src.t0, p = (simT - src.t0) / T;
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    const hip = projectLocal(climber.P);
+    for (const n of [1, 2]) {
+      // fade out before the next beat, so the "2" is gone by the TAC
+      const dt = simT - (src.t0 + (n * T) / 3), fade = Math.min(0.22, T / 4);
+      if (dt < -0.04 || dt > fade) continue;
+      const k = dt < 0 ? 1 + dt / 0.04 : 1 - dt / fade;
+      ctx.globalAlpha = clamp(k, 0, 1);
+      ctx.font = `900 ${Math.round(46 + 14 * clamp(1 - dt / 0.1, 0, 1))}px ${FONT_D}`;
+      outlined(ctx, String(n), hip.x + (n === 1 ? -54 : 54), hip.y, '#ffffff', 7);
     }
     ctx.globalAlpha = 1;
-    // learning overlay
-    if (!result && tutorialLeft > 0) {
-      const inGood = Math.abs(simT - src.dp) <= src.w.good;
-      ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
-      if (inGood) {
-        const pulse = 1 + 0.08 * Math.sin(simT * 40);
-        ctx.font = `900 ${Math.round(44 * pulse)}px ${FONT_D}`;
-        outlined(ctx, t('tapNow'), W / 2, y - 30, '#ffffff', 7);
-      } else if (simT < src.dp) {
-        ctx.font = `800 17px ${FONT_U}`;
-        outlined(ctx, t('tapWhen'), W / 2, y - 30, '#efe9dc', 4);
-      }
+    const inWin = Math.abs(simT - src.dp) <= src.w.good || teachHold;
+    if (p >= DRIVE && simT < src.dp - src.w.good && !teachHold) {
+      ctx.font = `800 18px ${FONT_U}`;
+      outlined(ctx, t('tapApex'), hip.x, hip.y + 64, '#efe9dc', 5);
+    }
+    if (inWin && src.hand) {
+      const hp = projectLocal(src.hand === 'L' ? climber.J.hL : climber.J.hR);
+      const pulse = 1 + 0.08 * Math.sin(simT * 40 + performance.now() * 0.02);
+      ctx.font = `900 ${Math.round(40 * pulse)}px ${FONT_D}`;
+      ctx.textBaseline = 'bottom';
+      outlined(ctx, t('tapNow'), clamp(hp.x, 110, W - 110), hp.y - 26, '#ffffff', 7);
+    } else if (inWin && src.kind === 'feet') {
+      ctx.font = `900 40px ${FONT_D}`;
+      outlined(ctx, t('tapNow'), hip.x, hip.y + 70, '#ffffff', 7);
     }
   }
   function drawFX() {
@@ -673,18 +759,23 @@ export function startGame() {
     const A = attempt;
     const src = activeTiming();
     if (src) {
-      if (A.state === 'flight') {
+      const k = cueAt(simT, src.dp, src.w.good);
+      if (src.kind === 'flight') {
         const mv = A.flight.mv;
         const h = HOLD_BY_ID[mv.to];
-        drawRing(gripPos(mv.to, tmp), src, holdName(h.type).toUpperCase(), mv.dyno ? t('dyno') : '');
-      } else if (A.state === 'feet') {
-        drawRing(footPos(A.P.stances[A.stanceIdx].FL, tmp), src, t('feet'), '');
-      } else if (A.state === 'match') {
-        drawRing(gripPos(A.P.moves[A.P.moves.length - 1].to, tmp), src, t('match'), '');
+        gripPos(mv.to, tmp);
+        drawLabel(tmp, holdName(h.type).toUpperCase(), mv.dyno ? t('dyno') : '');
+        drawGlint(tmp.addScaledVector(BUP, 0.05).addScaledVector(NRM, 0.05), teachHold ? 1 : k);
+      } else if (src.kind === 'feet') {
+        footPos(A.P.stances[A.stanceIdx].FL, tmp);
+        drawLabel(tmp, t('feet'), '');
+        drawGlint(tmp.addScaledVector(BUP, 0.04).addScaledVector(NRM, 0.04), k);
+      } else if (src.kind === 'match') {
+        gripPos(A.P.moves[A.P.moves.length - 1].to, tmp);
+        drawLabel(tmp, t('match'), '');
+        drawGlint(tmp.addScaledVector(BUP, 0.05).addScaledVector(NRM, 0.05), k);
       }
-      drawMeter(src, null);
-    } else if (meter.last && simT - meter.last.at < 0.75 && (mode === 'climb' || mode === 'fallen' || mode === 'topped')) {
-      drawMeter(meter.last.src, meter.last);
+      if (tutorialLeft > 0) drawCoach(src);
     }
     for (let i = bursts.length - 1; i >= 0; i--) {
       const b = bursts[i], k = (simT - b.t0) / (b.big ? 0.45 : 0.32);
@@ -700,6 +791,8 @@ export function startGame() {
     for (let i = popups.length - 1; i >= 0; i--) {
       const p = popups[i], k = (simT - p.t0) / 0.9;
       if (k >= 1) { popups.splice(i, 1); continue; }
+      const pp = projectLocal(p.pos);
+      p.x = pp.x; p.y = pp.y - 34;
       const sc = p.scale * (k < 0.15 ? easeOutBack(k / 0.15) : 1);
       const y = p.y - k * 26;
       ctx.globalAlpha = k > 0.7 ? 1 - (k - 0.7) / 0.3 : 1;
@@ -761,6 +854,13 @@ export function startGame() {
     hud.vignette.style.opacity = String(pump * 0.85);
     hud.pumpTag.style.opacity = pump > 0.15 ? String(0.6 + 0.4 * Math.sin(simT * 9)) : '0';
     sfx.setPump(pump);
+    if (A && mode === 'climb') {
+      // music follows the climb: progress, crux (last quarter, or the next move is a dyno / the longest)
+      const mvs = A.P.moves, nm = mvs[A.moveIdx];
+      if (A.P.maxD == null) A.P.maxD = Math.max(...mvs.map((m) => m.d));
+      const crux = A.moveIdx >= mvs.length * 0.75 || !!(nm && (nm.dyno || nm.d >= A.P.maxD));
+      sfx.setIntensity({ progress: A.moveIdx / mvs.length, crux, combo: A.combo, pump });
+    }
     const hint = hintFor(A);
     if (hint !== lastHint) { hud.hint.textContent = hint; lastHint = hint; }
     const nx = nextChipFor(A);
@@ -821,7 +921,7 @@ export function startGame() {
     const now = performance.now();
     const ts = e && e.timeStamp;
     const pt = ts > 0 && Math.abs(now - ts) < 1000 ? ts : now;
-    return simT + ((pt - lastFrame) / 1000) * timeScale;
+    return simT + ((pt - lastFrame) / 1000) * (hitstop > 0 || teachHold ? 0 : timeScale);
   }
   function onPress(t) {
     if (paused) return;
@@ -882,13 +982,8 @@ export function startGame() {
   updateRecordLine();
 
   // ===================== Resize & loop =====================
-  const sbProbe = document.createElement('div');
-  sbProbe.style.cssText = 'position:fixed;left:0;bottom:0;width:1px;height:env(safe-area-inset-bottom,0px);visibility:hidden;pointer-events:none';
-  document.body.appendChild(sbProbe);
-  let safeBottom = 0;
   function resize() {
     W = window.innerWidth; H = window.innerHeight;
-    safeBottom = sbProbe.getBoundingClientRect().height || 0;
     world.resize(W, H);
     fxDpr = Math.min(window.devicePixelRatio || 1, 2);
     fx.width = Math.round(W * fxDpr); fx.height = Math.round(H * fxDpr);
@@ -907,18 +1002,23 @@ export function startGame() {
     if (LOCK) dt = 1 / 60;
     frameDt = dt;
     const frozen = paused || (TEST && window.__DP_FREEZE);
-    // slow motion around the deadpoint until the player has the rhythm
+    // slow motion from just before the drive to the end of the window, until the player has the
+    // rhythm; the very first catch ever freezes on the apex pose until the tap
     const src0 = activeTiming();
-    let tsTarget = 1;
+    let tsTarget = 1, holdAt = null;
     if (src0 && tutorialLeft > 0) {
       const p = (simT - src0.t0) / Math.max(0.05, src0.dp - src0.t0);
-      if (p > 0.55 && p < 1.3) tsTarget = 0.33;
+      if (p > 0.6 && simT < src0.dp + src0.w.ok) tsTarget = 0.4;
+      if (TEACH && tutorialLeft >= 3 && src0.kind === 'flight' && mode === 'climb') holdAt = src0.dp + session.latency;
     }
     timeScale += (tsTarget - timeScale) * (1 - Math.exp(-dt * 14));
     if (tsTarget === 1 && timeScale > 0.985) timeScale = 1;
-    if (session) session.freezeCalib = timeScale < 0.99;
-    const sdt = dt * timeScale;
+    let sdt = dt * timeScale;
+    if (hitstop > 0) { if (!frozen) hitstop -= dt; sdt = 0; }
     if (!frozen) simT += sdt;
+    teachHold = holdAt !== null && simT >= holdAt;
+    if (teachHold) { simT = holdAt; timeScale = 0; }
+    if (session) session.freezeCalib = timeScale < 0.99;
     // performance guard: step quality down while playing if the device struggles
     fpsAcc += dt; fpsN++;
     if (fpsAcc > 3) {
@@ -953,9 +1053,11 @@ export function startGame() {
         climber.setExpr(glance ? 'happy' : 'calm');
       }
       climber.update(sdt, simT, world.angle);
+      if (TEST) trackApex();
       world.updateChalk(sdt);
-      meter.src = activeTiming() || meter.src;
-      scheduleBeats(activeTiming());
+      const src1 = activeTiming();
+      scheduleBeats(src1);
+      moveCues(src1);
       const nextId = attempt && mode === 'climb' && !attempt.done && attempt.nextMove() ? attempt.nextMove().to : null;
       world.updateLit(simT, nextId, (L) => { if (mode === 'intro') sfx.ledBlip(L.order); });
       world.updatePads(simT);
@@ -966,6 +1068,25 @@ export function startGame() {
     drawFX();
   }
 
+  // test: when the pelvis stops rising (highest board y, i.e. velocity zero) relative to the deadpoint.
+  // Logged for flights still running 40 ms past the deadpoint, so a catch does not cut the curve.
+  function trackApex() {
+    const A = attempt;
+    const f = A && mode === 'climb' && A.state === 'flight' && climber.mode === 'climb' ? A.flight : null;
+    if (apex.key !== -1 && (!f || f.t0 !== apex.key)) {
+      if (apex.last >= apex.dp + 0.04) {
+        apex.log.push(+(apex.t - apex.dp).toFixed(4));
+        if (apex.log.length > 200) apex.log.shift();
+      }
+      apex.key = -1;
+    }
+    if (!f) return;
+    const p = (simT - f.t0) / f.T, y = climber.P.y;
+    if (apex.key !== f.t0) { apex.key = f.t0; apex.dp = f.dp; apex.y = -Infinity; apex.t = 0; }
+    if (p > 0.75 && y > apex.y) { apex.y = y; apex.t = simT; }
+    apex.last = simT;
+  }
+
   // test hooks (only when the test harness sets window.__DP_TEST before load)
   if (TEST) {
     window.__DP = {
@@ -973,7 +1094,7 @@ export function startGame() {
       get simT() { return simT; }, get fps() { return fpsAvg; }, get paused() { return paused; },
       get busy() { return fading() || climber.entering; },
       get timeScale() { return timeScale; }, get tutorialLeft() { return tutorialLeft; }, set tutorialLeft(v) { tutorialLeft = v; },
-      get quality() { return world.quality; },
+      get quality() { return world.quality; }, get apexLog() { return apex.log; }, get teachHold() { return teachHold; },
       start: (g) => startSession(g || 0), skip: () => finishIntro(), sfx, Sound, climber, world,
       TUNE, HOLD_TYPES,
     };

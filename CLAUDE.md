@@ -1,7 +1,8 @@
 # Deadpoint: guide for Claude Code
 
 3D climbing game on an adjustable LED board (Kilter-style). Plain JS + three.js, built with Vite into
-**one self-contained `dist/index.html`** (JS and CSS inlined). UI copy is Italian; code, comments and
+**one self-contained `dist/index.html`** (JS and CSS inlined). UI is English by default (`?lang=it` for
+Italian, strings in `src/i18n.js`); grades are shown in French/Font only (`6a+`, `7a`). Code, comments and
 commits are English. The owner (Daniele) prefers short, direct answers and hates scope creep.
 
 ## Commands
@@ -28,9 +29,9 @@ Use `QUICK=1`, `DPR=0.75` and `TIER=low` to iterate faster. `flow` and `smoke` s
 
 | File | Role |
 | --- | --- |
-| `logic.js` | **Pure game rules**, no DOM/three. Board layout, problem generator, grades, `TUNE`, `Attempt` (state machine: ready → flight → hang/rest/feet/match → top/fall), `Session` (pyramid, 3 tries). Shared with the Node simulator. |
+| `logic.js` | **Pure game rules**, no DOM/three. Board layout (`LAYOUT`: Kilter-like 19x18 bolt-on grid at 8" pitch, checkerboard foot chips, two kickboard rows with `kick: true`), problem generator (hands never on chips/kickboard; feet on chips, old hand holds or the kickboard), grades, `TUNE`, `Attempt` (state machine: ready → flight → hang/rest/feet/match → top/fall), `Session` (pyramid, 3 tries). Shared with the Node simulator. |
 | `climber.js` | The character: stylized model from primitives + physics-lite rig. Shoulders (S) and pelvis (P) are springs + position constraints; hands/feet are effectors that tween on arcs; two-bone IK; ponytail verlet chain; face expressions drawn on canvas. Modes: `climb`, `stand`, `fall`, `hidden`. |
-| `world.js` | Renderer, gym, board (tilts 20°-70°), sculpted holds (instanced), Kilter-style LED rims + glow, chalk particles, bloom, quality tiers (`high`/`mid`/`low`). |
+| `world.js` | Renderer, gym, board (tilts 20°-70°), birch panel + black steel frame, outline-driven charcoal holds with skirt and bolt (instanced per type x variant, kickboard holds in their own group), Kilter LED colours as a glow hugging the outline plus a tint on the lit hold, chalk particles, bloom, quality tiers (`high`/`mid`/`low`). |
 | `game.js` | Flow (title/intro/climb/fallen/topped/over), choreography (`driveClimber`: maps the attempt state to climber targets: hand arcs, deadpoint drive, feet cut, rest shake, match), events → sound/juice, camera, HUD, FX canvas (timing rings, popups), input, perf guard. |
 | `audio.js` | Procedural Web Audio: layered lo-fi score that follows the climb, foley (catch, whoosh, land, heartbeat when pumped). No samples. |
 | `style.css`, `index.html` | HUD and screens. Keep the `[hidden] { display: none !important }` rule: several overlays set `display` and would otherwise cover the game. |
@@ -41,21 +42,31 @@ Use `QUICK=1`, `DPR=0.75` and `TIER=low` to iterate faster. `flow` and `smoke` s
 - The rules clock is `simT` (seconds, pauses with the game). Input timestamps are mapped onto it in
   `evTime`. Timing windows: `TUNE.win` × grade × hold type × pump; latency auto-calibrates.
 - Game rules change → run `npm run sim` and keep the bands in `test/sim.mjs` (`BANDS`) green.
-  Current medians: novice V3, casual V6, good V8, good-without-resting V6, expert V10.
+  Current medians: novice V3, casual V6, good V8, good-without-resting V6, expert V9.
 - Visual change → take screenshots (`test:shots`) and look at them before committing.
 - Test hooks exist only when the page is loaded with `window.__DP_TEST = true` (see `test/e2e.mjs`).
 
-### Timing UI (learned from playtests: keep it this explicit)
-- The player must know *when* to tap without knowing rhythm games. Three cues, all in `game.js`:
-  bottom **meter** (`drawMeter`: cursor runs into the white **ORA** zone; zone widths are the real
-  perfect/good/ok windows; after the tap it shows where you hit), a **white** approach ring on the
-  target hold (`drawRing`, fills white + "ORA!" inside the window), and an audio countdown
-  **tic, tic, TAC** (`scheduleBeats` → `sfx.tick`, the TAC lands on the deadpoint).
-- **Slow motion while learning**: until 3 good/perfect catches (`tutorialLeft`, localStorage
-  `deadpoint:tutorial`) time slows to 0.33× around the deadpoint and "TOCCA ORA!" appears.
-  Latency auto-calibration is frozen during slow motion (`session.freezeCalib`).
-- Never draw LEDs as rings and never use LED colours for timing cues: the first playtest confused
-  the timing ring with the LED rings. LEDs are filled glows under the hold; unlit holds are muted.
+### Timing UI (learned from playtests: the cue is the climber's body, no bar)
+- The first playtest's bottom meter pulled the eye off the climber, so it is gone (no meter, no
+  shrinking ring). `driveClimber` in `game.js` plays every timed move with one grammar on the
+  phase p = (simT - t0) / T: **rock 1** (hips sink and push out, bottom at p = 1/3, *tic*), rebound,
+  **rock 2** (deepest, p = 2/3, *tic* plus an exhale), **drive** (hand lets go, chalk puff, whoosh),
+  **rise** (a parabola: hips, shoulders and hand come to rest together at p = 1, the deadpoint, *TAC*).
+  The tap launches the move and is beat 0, so the count is even: tap, tic, tic, TAC (`scheduleBeats`).
+- At the deadpoint: an open hand (fingers splay), a white flash on the hand (`climber.flash`/`CT.flash*`),
+  a white 4-point glint with a dark outline on the target (`drawGlint`) and a weightless ponytail.
+  The whoosh cuts 40 ms before the TAC. Feet cut: the legs swing out and are back on the wall at the
+  deadpoint (foot flash, dust, thud). Match: same grammar, smaller.
+- Hips are springs: the curve is sampled `LEAD` s ahead. `test/e2e.mjs flow` checks that the pelvis
+  apex (`__DP.apexLog`) lands within 15 ms of the deadpoint (median).
+- Result on the body: perfect = grip snap + 60 ms hitstop (excluded from `evTime`); too early = fist
+  in the air; late = the body sinks and the hand slides off. Popups stay attached to the board.
+- **Learning** (`tutorialLeft`, localStorage `deadpoint:tutorial`, 3 good/perfect catches): slow motion
+  0.4x from p = 0.6 to the end of the window, the camera orbits to a 3/4 side view, on-body text
+  ("1", "2" at the hips, "Tocca quando si ferma in alto", "TOCCA ORA!" above the hand). The very first
+  catch freezes time on the apex until the tap (`TEACH`, off in tests unless `__DP_TEACH`).
+  Latency calibration is frozen while slowed (`session.freezeCalib`).
+- Never draw LEDs as rings and never use LED colours for timing cues. Timing cues are white.
 
 ## Deploy
 - Push to `main` → GitHub Actions (`deploy.yml`) runs generator + balance checks, builds, publishes to

@@ -1,9 +1,9 @@
-// UI strings. Italian is the default (GitHub Pages + climbritz.app/gioco); `?lang=en` switches
-// to English (the Climbritz app embeds the game with `?lang=en&embed=1`). Grade labels are not
+// UI strings. English is the default (GitHub Pages, climbritz.app/gioco and the Climbritz app,
+// which embeds the game with `?lang=en&embed=1`); `?lang=it` switches to Italian. Grade labels are not
 // translated. `t(key, ...args)`: plain strings or functions of args.
 const params = (() => { try { return new URLSearchParams(window.location.search); } catch (e) { return new URLSearchParams(); } })();
 
-export const LANG = params.get('lang') === 'en' ? 'en' : 'it';
+export const LANG = params.get('lang') === 'it' ? 'it' : 'en';
 // Embedded in a host app (iframe): the host owns safe areas and navigation. Nothing in the game
 // reads window.top or opens external links, so this only tags <html> for styling hooks.
 export const EMBED = params.get('embed') === '1';
@@ -17,7 +17,7 @@ const S = {
     lede: 'Prendi ogni presa nel punto morto del lancio, gestisci la ghisa e chiudi il blocco con le mani sul top.',
     legStart: 'Partenza', legHand: 'Mani e piedi', legFinish: 'Top', legFoot: 'Solo piedi',
     how1: '<b>Tocca</b> per lanciarti verso la presa illuminata.',
-    how2: '<b>Tocca di nuovo quando il cursore entra in ORA</b>, la zona bianca della barra in basso. <small>Tic, tic, TAC: si tocca sul TAC. Perfetto = meno fatica.</small>',
+    how2: '<b>Guarda la scalatrice</b>: carica due volte, spinge, e <b>tocca quando si ferma in alto</b> con la mano aperta sulla presa. <small>Tic, tic, TAC: si tocca sul TAC. Perfetto = meno fatica.</small>',
     how3: '<b>Tieni premuto</b> sulle prese buone per scuotere le braccia. <small>Sulle tacchette non si recupera.</small>',
     startFrom: 'Parti da', btnStart: 'Inizia sessione',
     sessionOver: 'Sessione finita', boardCleared: 'Board chiusa, complimenti',
@@ -32,20 +32,20 @@ const S = {
     tooEarly: 'TROPPO PRESTO', tooLate: 'TROPPO TARDI',
     whyPump: 'Ghisato: riposa sulle maniglie', whyEarly: 'Troppo presto', whyLate: 'Troppo tardi',
     fell: 'CADUTO', attemptOf: (n, m) => `tentativo ${n} di ${m}`,
-    topGrade: (f, v, a) => `Grado massimo ${f} · ${v} a ${a}°`, newRecord: ' · nuovo record',
+    topGrade: (f, a) => `Grado massimo ${f} a ${a}°`, newRecord: ' · nuovo record',
     noSends: 'Nessun blocco chiuso. Il primo è sempre il più difficile.',
     attemptsN: (n) => `${n} tentativi`, attemptShort: (n) => `${n}°`,
     pumped: 'GHISATO', outOfEnergy: 'energia finita', energyCost: (c) => `−${c} energia`,
     feetBang: 'PIEDI!', feet: 'PIEDI', feetMissed: 'PIEDI MANCATI', matchMissed: 'MATCH MANCATO', match: 'MATCH',
     onTheEdge: ' · al limite!', topLine: (pts, p, m, edge) => `+${pts} punti · perfetti ${p}/${m}${edge}`,
     rhythm: 'RITMO PRESO', noSlowmo: 'Da qui in poi niente rallentatore',
-    now: 'ORA', nowBang: 'ORA!', tapNow: 'TOCCA ORA!', tapWhen: 'Tocca quando il cursore entra in ORA',
+    tapNow: 'TOCCA ORA!', tapApex: 'Tocca quando si ferma in alto',
     dyno: 'LANCIO', feetCut: 'PIEDI FUORI',
     problemN: (n) => `Blocco ${n}`,
     hintFirst: 'Tocca per lanciarti verso la presa', hintStart: 'Tocca per partire',
     hintRest: 'Presa buona: tieni premuto per recuperare', hintNoRest: 'Qui non si recupera: muoviti',
     hintNext: 'Tocca per la prossima presa', hintShake: 'Scuoti le braccia… rilascia quando sei pronto',
-    hintDrain: 'Qui perdi energia: rilascia', hintFeet: 'Piedi fuori: rimettili quando il cursore entra in ORA',
+    hintDrain: 'Qui perdi energia: rilascia', hintFeet: 'Piedi fuori: tocca quando tornano sul muro',
     hintMatch: 'Porta la seconda mano sul top',
     nextTop: 'Top', nextHold: 'Prossima',
     cardHead: (n, a, m) => `BLOCCO ${n} · TENTATIVO ${a} DI ${m}`,
@@ -62,7 +62,7 @@ const S = {
     lede: 'Catch every hold at the deadpoint of the move, manage the pump and top out with both hands on the finish.',
     legStart: 'Start', legHand: 'Hands and feet', legFinish: 'Top', legFoot: 'Feet only',
     how1: '<b>Tap</b> to launch toward the lit hold.',
-    how2: '<b>Tap again when the cursor enters NOW</b>, the white zone of the bar at the bottom. <small>Tick, tick, TOCK: tap on the TOCK. Perfect = less pump.</small>',
+    how2: '<b>Watch the climber</b>: she loads twice, drives, and <b>you tap when she stops at the top</b> with her hand open on the hold. <small>Tick, tick, TOCK: tap on the TOCK. Perfect = less pump.</small>',
     how3: '<b>Press and hold</b> on good holds to shake out. <small>No rest on crimps.</small>',
     startFrom: 'Start from', btnStart: 'Start session',
     sessionOver: 'Session over', boardCleared: 'Board cleared, well done',
@@ -76,20 +76,20 @@ const S = {
     tooEarly: 'TOO EARLY', tooLate: 'TOO LATE',
     whyPump: 'Pumped: rest on the jugs', whyEarly: 'Too early', whyLate: 'Too late',
     fell: 'FELL', attemptOf: (n, m) => `attempt ${n} of ${m}`,
-    topGrade: (f, v, a) => `Top grade ${f} · ${v} at ${a}°`, newRecord: ' · new record',
+    topGrade: (f, a) => `Top grade ${f} at ${a}°`, newRecord: ' · new record',
     noSends: 'No problems sent. The first one is always the hardest.',
     attemptsN: (n) => `${n} attempts`, attemptShort: (n) => `#${n}`,
     pumped: 'PUMPED', outOfEnergy: 'out of energy', energyCost: (c) => `−${c} energy`,
     feetBang: 'FEET!', feet: 'FEET', feetMissed: 'FEET MISSED', matchMissed: 'MATCH MISSED', match: 'MATCH',
     onTheEdge: ' · on the edge!', topLine: (pts, p, m, edge) => `+${pts} points · perfect ${p}/${m}${edge}`,
     rhythm: 'GOT THE RHYTHM', noSlowmo: 'No more slow motion from here',
-    now: 'NOW', nowBang: 'NOW!', tapNow: 'TAP NOW!', tapWhen: 'Tap when the cursor enters NOW',
+    tapNow: 'TAP NOW!', tapApex: 'Tap when she stops at the top',
     dyno: 'DYNO', feetCut: 'FEET CUT',
     problemN: (n) => `Problem ${n}`,
     hintFirst: 'Tap to launch toward the hold', hintStart: 'Tap to start',
     hintRest: 'Good hold: press and hold to recover', hintNoRest: 'No rest here: keep moving',
     hintNext: 'Tap for the next hold', hintShake: 'Shake out… release when you are ready',
-    hintDrain: 'You lose energy here: let go', hintFeet: 'Feet cut: put them back when the cursor enters NOW',
+    hintDrain: 'You lose energy here: let go', hintFeet: 'Feet cut: tap when they swing back to the wall',
     hintMatch: 'Bring the second hand to the top',
     nextTop: 'Top', nextHold: 'Next',
     cardHead: (n, a, m) => `PROBLEM ${n} · ATTEMPT ${a} OF ${m}`,
@@ -123,13 +123,14 @@ export function problemName(pr) {
 }
 
 // Static HTML: elements carry data-i18n (innerHTML) / data-i18n-aria (aria-label).
-// Italian text stays in index.html, so the default page is unchanged even before this runs.
+// index.html still holds the Italian text; the active table always overwrites it.
 export function applyDom(doc = document) {
   doc.documentElement.lang = LANG;
   if (EMBED) doc.documentElement.dataset.embed = '1';
-  if (LANG === 'it') return;
   const meta = doc.querySelector('meta[name="description"]');
   if (meta) meta.setAttribute('content', TABLE.metaDesc);
   for (const el of doc.querySelectorAll('[data-i18n]')) el.innerHTML = TABLE[el.dataset.i18n];
   for (const el of doc.querySelectorAll('[data-i18n-aria]')) el.setAttribute('aria-label', TABLE[el.dataset.i18nAria]);
 }
+
+export const STRINGS = S; // for checks

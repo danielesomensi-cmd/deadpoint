@@ -6,27 +6,32 @@ import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
-import { BOARD_W, BOARD_H, KICK_TOP, MAT_TOP, mulberry32, clamp } from './logic.js';
+import { BOARD_W, BOARD_H, KICK_TOP, MAT_TOP, LAYOUT, mulberry32, clamp } from './logic.js';
 
 const V3 = THREE.Vector3;
 const deg = (d) => (d * Math.PI) / 180;
 const easeOutBack = (x) => { const c1 = 1.9, c3 = c1 + 1; return 1 + c3 * Math.pow(x - 1, 3) + c1 * Math.pow(x - 1, 2); };
 const smooth = (a, b, x) => { const t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
 
-export const ROLE_HEX = { start: '#36e27a', hand: '#2ad4e0', finish: '#ff3fb0', foot: '#ffc629' };
-const HOLD_PALETTE = ['#c39a45', '#a9563f', '#3f638e', '#2b2d33', '#d9d2c2', '#5a7d55', '#6a5891'];
+// Kilter-style LED colours: start green, hand cyan, finish magenta, foot orange
+export const ROLE_HEX = { start: '#2bff5a', hand: '#12e6ff', finish: '#ff2bd6', foot: '#ff9a1a' };
+const HOLD_PALETTE = ['#c39a45', '#a9563f', '#3f638e', '#2b2d33', '#d9d2c2', '#5a7d55', '#6a5891']; // side walls only
+const HOLD_TONE = '#56585e'; // every board hold: one charcoal tone (±6%), so the LEDs carry the colour
 
-// half extents (m) of each hold family, and noise amount
+// half extents (m) of each hold family, and depth of the body above the skirt
 const HOLD_SHAPE = {
-  jug: { sx: 0.085, sy: 0.062, sz: 0.06, n: 0.07 },
-  edge: { sx: 0.1, sy: 0.032, sz: 0.042, n: 0.05 },
-  crimp: { sx: 0.07, sy: 0.02, sz: 0.028, n: 0.05 },
-  sloper: { sx: 0.1, sy: 0.085, sz: 0.042, n: 0.06 },
-  pinch: { sx: 0.036, sy: 0.08, sz: 0.052, n: 0.06 },
-  chip: { sx: 0.03, sy: 0.024, sz: 0.02, n: 0.12 },
+  jug: { sx: 0.074, sy: 0.062, d: 0.062, k: 0.5 },
+  edge: { sx: 0.074, sy: 0.052, d: 0.042, k: 0.45 },
+  crimp: { sx: 0.064, sy: 0.038, d: 0.027, k: 0.5 },
+  sloper: { sx: 0.08, sy: 0.07, d: 0.042, k: -0.4 },
+  pinch: { sx: 0.037, sy: 0.077, d: 0.056, k: 0 },
+  chip: { sx: 0.038, sy: 0.03, d: 0.019, k: 0.2 },
 };
-export const HOLD_DEPTH = { jug: 0.066, edge: 0.046, crimp: 0.031, sloper: 0.046, pinch: 0.057, chip: 0.022 };
-const VARIANTS = 3;
+const SKIRT = 0.004;
+export const HOLD_DEPTH = Object.fromEntries(Object.entries(HOLD_SHAPE).map(([k, v]) => [k, v.d + SKIRT]));
+const VARIANTS = 4;
+// outline families, by how common they are on a Kilter set
+const FAMILIES = [['tri', 0.4], ['D', 0.2], ['tear', 0.15], ['bean', 0.15], ['square', 0.1]];
 
 export const QUALITY = {
   high: { dpr: 2, shadow: 2048, bloom: true, msaa: 4 },
@@ -34,36 +39,118 @@ export const QUALITY = {
   low: { dpr: 1, shadow: 0, bloom: false, msaa: 0 },
 };
 
+// Closed outline (N points, unit box [-1,1]^2) of one hold family.
+function holdOutline(fam, rnd, N) {
+  const se = (t, n) => [Math.sign(Math.cos(t)) * Math.pow(Math.abs(Math.cos(t)), 2 / n), Math.sign(Math.sin(t)) * Math.pow(Math.abs(Math.sin(t)), 2 / n)];
+  const a3 = 0.1 + rnd() * 0.07, ph3 = -Math.PI / 2 + (rnd() - 0.5) * 0.6;
+  const a1 = (rnd() - 0.5) * 0.14, ph1 = rnd() * 6.28, a5 = 0.012 + rnd() * 0.02, ph5 = rnd() * 6.28;
+  const tearDir = -Math.PI / 2 + (rnd() - 0.5) * 1.2;
+  const pts = [];
+  for (let i = 0; i < N; i++) {
+    const t = (i / N) * Math.PI * 2;
+    let x, y;
+    if (fam === 'tri') { const r = 1 + a3 * Math.cos(3 * t + ph3) + a1 * Math.cos(t + ph1); x = r * Math.cos(t); y = r * Math.sin(t); }
+    else if (fam === 'D') { [x, y] = se(t, 2.6); if (y > 0.25) y = 0.25 + (y - 0.25) * 0.2; }
+    else if (fam === 'tear') { const r = 1 + 0.3 * Math.cos(t - tearDir) + 0.04 * Math.cos(3 * t + ph3); x = r * Math.cos(t); y = r * Math.sin(t); }
+    else if (fam === 'bean') { [x, y] = se(t, 2.4); y -= 0.22 * (1 - x * x) * (y > 0 ? 1 : 0.4); }
+    else { [x, y] = se(t, 4); }
+    const n = 1 + a5 * Math.cos(5 * t + ph5);
+    pts.push([x * n, y * n]);
+  }
+  let x0 = 1e9, x1 = -1e9, y0 = 1e9, y1 = -1e9;
+  for (const [x, y] of pts) { x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y); }
+  return pts.map(([x, y]) => [((x - x0) / (x1 - x0)) * 2 - 1, ((y - y0) / (y1 - y0)) * 2 - 1]);
+}
+
+// Outline-driven hold: flat back, a thin darker skirt, a body whose peak leans to the grip side,
+// a centre bolt and 1-2 set screws (chips: two screws). Vertex colours carry skirt, chalk and hardware.
 function sculptHold(type, variant) {
   const sh = HOLD_SHAPE[type];
   const rnd = mulberry32(9001 + variant * 131 + type.charCodeAt(0) * 17 + type.length * 7);
-  const geo = new THREE.SphereGeometry(1, 24, 16);
-  const pos = geo.attributes.position;
-  const ax = 1 + (rnd() - 0.5) * 0.3, ay = 1 + (rnd() - 0.5) * 0.3;
-  const ph = [rnd() * 6.28, rnd() * 6.28, rnd() * 6.28, rnd() * 6.28];
-  const v = new V3();
-  for (let i = 0; i < pos.count; i++) {
-    v.fromBufferAttribute(pos, i);
-    const nz = Math.sin(2.3 * v.x + ph[0]) * Math.sin(2.9 * v.y + ph[1]) * 0.6 + Math.sin(3.7 * v.z + 1.7 * v.x + ph[2]) * 0.4 + Math.sin(5.1 * v.y + 2.3 * v.z + ph[3]) * 0.25;
-    const r = 1 + sh.n * nz;
-    let X = v.x * r, Y = v.y * r, Z = v.z * r;
-    if (type === 'jug') {
-      // pocket behind a raised front lip: fingers go in from the top
-      if (Y > 0) { const backness = 1 - smooth(-0.2, 0.85, Z); Y -= 0.6 * Y * backness * smooth(0.0, 0.5, Y); }
-      if (Y < 0) Y *= 0.85;
-    } else if (type === 'edge' || type === 'crimp') {
-      if (Y > 0.35) Y = 0.35 + (Y - 0.35) * 0.18; // flat top ledge
-      Z *= 1 - 0.18 * Math.max(0, -Y);
-    } else if (type === 'pinch') {
-      X *= 1 - 0.35 * Math.max(0, Z);
-    } else if (type === 'sloper') {
-      Z *= 0.95;
-    }
-    if (Z < 0) Z *= 0.1; // flat back against the panel
-    pos.setXYZ(i, X * sh.sx * ax, Y * sh.sy * ay, (Z + 0.1) * sh.sz);
+  let fam;
+  if (type === 'pinch') fam = rnd() < 0.5 ? 'tear' : 'tri';
+  else { let r = rnd(); fam = FAMILIES.find(([, w]) => (r -= w) < 0)?.[0] || 'tri'; }
+  const N = 32;
+  const ax = 0.92 + rnd() * 0.16, ay = 0.92 + rnd() * 0.16;
+  const sx = sh.sx * ax, sy = sh.sy * ay;
+  const out = holdOutline(fam, rnd, N).map(([x, y]) => [x * sx, y * sy]);
+  const ang = out.map(([x, y]) => Math.atan2(y, x)), rad = out.map(([x, y]) => Math.hypot(x, y));
+  // boundary radius along any direction (outline is star-shaped around the bolt)
+  const boundary = (a) => {
+    let best = 0, bd = 9;
+    for (let i = 0; i < N; i++) { let d = Math.abs(a - ang[i]); d = Math.min(d, 2 * Math.PI - d); if (d < bd) { bd = d; best = i; } }
+    const j = (best + 1) % N, k = (best + N - 1) % N;
+    const dj = Math.abs(Math.atan2(Math.sin(ang[j] - a), Math.cos(ang[j] - a))), dk = Math.abs(Math.atan2(Math.sin(ang[k] - a), Math.cos(ang[k] - a)));
+    const o = dj < dk ? j : k, d2 = Math.min(dj, dk);
+    return (rad[best] * d2 + rad[o] * bd) / Math.max(1e-6, bd + d2);
+  };
+  const k = sh.k;
+  const body = (u, qx, qy) => {
+    let f;
+    if (type === 'sloper') f = Math.pow(Math.max(0, 1 - u * u), 0.7);
+    else if (type === 'pinch') f = Math.pow(Math.max(0, 1 - Math.pow(u, 2.2)), 0.5) * (0.65 + 0.35 * (1 - Math.abs(qx)));
+    else f = Math.pow(Math.max(0, 1 - Math.pow(u, 2.4)), 0.55);
+    return SKIRT + sh.d * f * (1 + k * qy) / (1 + Math.abs(k));
+  };
+  const heightAt = (x, y) => {
+    const u = Math.min(1, Math.hypot(x, y) / boundary(Math.atan2(y, x)));
+    return body(u * 0.985, x / sx, y / sy);
+  };
+  const P = [], C = [], I = [];
+  const vtx = (x, y, z, c) => { P.push(x, y, z); C.push(c, c, c); return P.length / 3 - 1; };
+  const ring = (fn) => { const a = []; for (let i = 0; i < N; i++) a.push(fn(i)); return a; };
+  const strip = (r0, r1) => { for (let i = 0; i < N; i++) { const j = (i + 1) % N; I.push(r0[i], r1[j], r1[i], r0[i], r0[j], r1[j]); } };
+  const inset = (i, d) => { const [x, y] = out[i], r = rad[i]; return [x * (1 - d / r), y * (1 - d / r)]; };
+  const ringA = ring((i) => vtx(out[i][0], out[i][1], 0, 0.5));
+  const ringB = ring((i) => { const [x, y] = inset(i, 0.003); return vtx(x, y, SKIRT, 0.58); });
+  strip(ringA, ringB);
+  let prev = ring((i) => { const [x, y] = inset(i, 0.003); return vtx(x, y, SKIRT, 0.92); });
+  for (const u of [0.97, 0.9, 0.78, 0.62, 0.44, 0.26, 0.1]) {
+    const r = ring((i) => {
+      const [bx, by] = inset(i, 0.003), x = bx * u, y = by * u, qx = x / sx, qy = y / sy;
+      let c = 1 + 0.45 * smooth(0.0, 0.9, qy) * (1 - u * u) + 0.12 * (1 - u); // chalk on the grip side
+      if (type === 'jug' && qy > 0.35 && u > 0.5) c *= 0.72; // shadowed pocket behind the lip
+      return vtx(x, y, body(u * 0.985, qx, qy), c);
+    });
+    strip(prev, r); prev = r;
   }
+  const ctr = vtx(0, 0, body(0, 0, 0), 1.1);
+  for (let i = 0; i < N; i++) I.push(prev[i], prev[(i + 1) % N], ctr);
+  // hardware: small dark fans that follow the surface
+  const disc = (cx, cy, r, c, seg = 10) => {
+    const c0 = vtx(cx, cy, heightAt(cx, cy) + 0.0012, c);
+    const rr = [];
+    for (let i = 0; i < seg; i++) { const a = (i / seg) * Math.PI * 2, x = cx + Math.cos(a) * r, y = cy + Math.sin(a) * r; rr.push(vtx(x, y, heightAt(x, y) + 0.0012, c)); }
+    for (let i = 0; i < seg; i++) I.push(c0, rr[i], rr[(i + 1) % seg]);
+  };
+  if (type === 'chip') { disc(-0.0125, -0.002, 0.0035, 0.18, 8); disc(0.0125, -0.002, 0.0035, 0.18, 8); }
+  else {
+    disc(0, 0, 0.011, 0.42, 14); disc(0, 0, 0.0065, 0.08, 10); // washer + bolt hole
+    const ns = rnd() < 0.5 ? 1 : 2, a0 = rnd() * Math.PI * 2;
+    for (let n = 0; n < ns; n++) {
+      const a = a0 + n * (2.2 + rnd()), r = boundary(a) * 0.62;
+      disc(Math.cos(a) * r, Math.sin(a) * r, 0.003, 0.12, 6);
+    }
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(P, 3));
+  geo.setAttribute('color', new THREE.Float32BufferAttribute(C, 3));
+  geo.setIndex(I);
   geo.computeVertexNormals();
-  return { geo, rx: sh.sx * ax, ry: sh.sy * ay };
+  // LED glow that hugs the outline: filled to the hold edge, solid band just outside it, then feathered
+  const G = [0, 0, 0], GA = [1, 1, 1, 1], GI = [];
+  const rings = [[1.0, 0, 1], [1.15, 0.01, 0.75], [1.2, 0.045, 0]];
+  rings.forEach(([m, d, al]) => { for (let i = 0; i < N; i++) { const [x, y] = out[i], r = rad[i]; G.push(x * m + (x / r) * d, y * m + (y / r) * d, 0); GA.push(1, 1, 1, al); } });
+  for (let i = 0; i < N; i++) GI.push(0, 1 + i, 1 + ((i + 1) % N));
+  for (let rI = 0; rI < 2; rI++) for (let i = 0; i < N; i++) {
+    const a = 1 + rI * N + i, b = 1 + rI * N + ((i + 1) % N), c = a + N, d = b + N;
+    GI.push(a, c, d, a, d, b);
+  }
+  const glow = new THREE.BufferGeometry();
+  glow.setAttribute('position', new THREE.Float32BufferAttribute(G, 3));
+  glow.setAttribute('color', new THREE.Float32BufferAttribute(GA, 4));
+  glow.setIndex(GI);
+  return { geo, glow, rx: sx, ry: sy };
 }
 
 function canvasTex(renderer, w, h, draw, srgb = true) {
@@ -111,47 +198,48 @@ export function createWorld({ canvas, holds, quality = 'mid', test = {} }) {
   scene.add(rim);
 
   // ---------- textures ----------
-  const woodTex = canvasTex(renderer, 1024, 1024, (g, w, h) => {
-    const rnd = mulberry32(7);
-    g.fillStyle = '#ad8a5d'; g.fillRect(0, 0, w, h);
-    for (let i = 0; i < 340; i++) {
-      const y0 = rnd() * h, a = 2 + rnd() * 7, f = 0.003 + rnd() * 0.01, ph = rnd() * 6;
-      g.strokeStyle = rnd() < 0.5 ? `rgba(98,66,36,${0.05 + rnd() * 0.08})` : `rgba(222,196,150,${0.04 + rnd() * 0.07})`;
-      g.lineWidth = 0.6 + rnd() * 2;
+  // smooth birch ply: low-contrast grain, 4 ft sheet seams, chalk where hands go, rubber low down
+  const birch = (g, w, h, rnd, seams) => {
+    g.fillStyle = '#d2b98f'; g.fillRect(0, 0, w, h);
+    for (let i = 0; i < 260; i++) {
+      const y0 = rnd() * h, a = 2 + rnd() * 6, f = 0.002 + rnd() * 0.008, ph = rnd() * 6;
+      g.strokeStyle = rnd() < 0.55 ? `rgba(150,112,70,${0.03 + rnd() * 0.05})` : `rgba(245,228,196,${0.03 + rnd() * 0.05})`;
+      g.lineWidth = 0.6 + rnd() * 2.2;
       g.beginPath();
       for (let x = 0; x <= w; x += 16) { const y = y0 + Math.sin(x * f + ph) * a; if (x === 0) g.moveTo(x, y); else g.lineTo(x, y); }
       g.stroke();
     }
-    // panel seams (4x4 ft plywood sheets)
-    for (let k = 1; k < 3; k++) {
+    if (seams) for (let k = 1; k < 3; k++) {
       for (const [x0, y0, x1, y1] of [[(k * w) / 3, 0, (k * w) / 3, h], [0, (k * h) / 3, w, (k * h) / 3]]) {
-        g.strokeStyle = 'rgba(40,28,16,0.75)'; g.lineWidth = 3; g.beginPath(); g.moveTo(x0, y0); g.lineTo(x1, y1); g.stroke();
-        g.strokeStyle = 'rgba(255,236,200,0.18)'; g.lineWidth = 1.5; g.beginPath(); g.moveTo(x0 + 2, y0 + 2); g.lineTo(x1 + 2, y1 + 2); g.stroke();
+        g.strokeStyle = 'rgba(70,52,34,0.55)'; g.lineWidth = 2; g.beginPath(); g.moveTo(x0, y0); g.lineTo(x1, y1); g.stroke();
       }
     }
-    // t-nut grid
-    const pxm = w / BOARD_W, pym = h / BOARD_H;
-    for (let j = 0; ; j++) {
-      const y = 0.14 + j * 0.2; if (y > BOARD_H - 0.1) break;
-      for (let i = 0; ; i++) {
-        const x = -BOARD_W / 2 + 0.13 + i * 0.2 + (j % 2 ? 0.1 : 0); if (x > BOARD_W / 2 - 0.1) break;
-        const px = (x + BOARD_W / 2) * pxm, py = h - y * pym;
-        g.fillStyle = 'rgba(24,18,12,0.85)'; g.beginPath(); g.arc(px, py, 3.4, 0, 7); g.fill();
-        g.fillStyle = 'rgba(255,240,210,0.12)'; g.beginPath(); g.arc(px + 0.8, py + 0.8, 3.8, 0, 7); g.fill();
-        g.fillStyle = 'rgba(24,18,12,0.5)'; g.beginPath(); g.arc(px, py + 15, 2.2, 0, 7); g.fill();
-      }
-    }
-    // chalk smudges above the holds, rubber marks low down
-    for (let i = 0; i < 90; i++) {
-      const x = rnd() * w, y = rnd() * h * 0.9, r = 6 + rnd() * 26;
+  };
+  const woodTex = canvasTex(renderer, 1024, 1024, (g, w, h) => {
+    const rnd = mulberry32(7);
+    birch(g, w, h, rnd, true);
+    const pxm = w / BOARD_W, pym = h / BOARD_H, L = LAYOUT;
+    // chalk smudges above random grid holds (hands), rubber marks around chips low on the board
+    for (let n = 0; n < 120; n++) {
+      const i = Math.floor(rnd() * L.cols), j = 2 + Math.floor(rnd() * (L.rows - 2));
+      const x = (L.x0 + i * L.PX + BOARD_W / 2) * pxm, y = h - (L.y0 + j * L.PY + 0.05) * pym, r = 10 + rnd() * 22;
       const gr = g.createRadialGradient(x, y, 0, x, y, r);
-      gr.addColorStop(0, `rgba(255,255,255,${0.08 + rnd() * 0.14})`); gr.addColorStop(1, 'rgba(255,255,255,0)');
+      gr.addColorStop(0, `rgba(255,255,255,${0.12 + rnd() * 0.18})`); gr.addColorStop(1, 'rgba(255,255,255,0)');
       g.fillStyle = gr; g.fillRect(x - r, y - r, 2 * r, 2 * r);
     }
-    for (let i = 0; i < 70; i++) {
-      const x = rnd() * w, y = h * 0.55 + rnd() * h * 0.45, r = 3 + rnd() * 9;
-      g.fillStyle = `rgba(20,18,16,${0.06 + rnd() * 0.1})`;
-      g.beginPath(); g.ellipse(x, y, r * 1.6, r * 0.7, rnd() * 3, 0, 7); g.fill();
+    for (let n = 0; n < 110; n++) {
+      const x = rnd() * w, y = h - rnd() * 1.2 * pym, r = 2 + rnd() * 7;
+      g.fillStyle = `rgba(30,24,20,${0.05 + rnd() * 0.1})`;
+      g.beginPath(); g.ellipse(x, y, r * 1.7, r * 0.6, rnd() * 3, 0, 7); g.fill();
+    }
+  });
+  const kickTex = canvasTex(renderer, 1024, 256, (g, w, h) => {
+    const rnd = mulberry32(8);
+    birch(g, w, h, rnd, false);
+    for (let n = 0; n < 160; n++) { // heavy rubber on the kickboard
+      const x = rnd() * w, y = rnd() * h, r = 2 + rnd() * 8;
+      g.fillStyle = `rgba(30,24,20,${0.06 + rnd() * 0.12})`;
+      g.beginPath(); g.ellipse(x, y, r * 1.7, r * 0.6, rnd() * 3, 0, 7); g.fill();
     }
   });
   const haloTex = canvasTex(renderer, 128, 128, (g, w) => {
@@ -195,19 +283,30 @@ export function createWorld({ canvas, holds, quality = 'mid', test = {} }) {
     pad.receiveShadow = true;
     scene.add(pad); pads.push(pad);
   }
-  const kick = new THREE.Mesh(new THREE.BoxGeometry(BOARD_W, KICK_TOP, 0.06), new THREE.MeshStandardMaterial({ color: '#3a322a', roughness: 0.85, envMapIntensity: 0.2 }));
-  kick.position.set(0, KICK_TOP / 2, -0.03); kick.receiveShadow = true;
+  // kickboard: birch like the board, black steel posts, dark hinge strip
+  const steel = new THREE.MeshStandardMaterial({ color: '#141518', roughness: 0.62, metalness: 0.35, envMapIntensity: 0.4 });
+  const plyEdge = new THREE.MeshStandardMaterial({ color: '#b89f74', roughness: 0.85 });
+  const kickWood = new THREE.MeshStandardMaterial({ map: kickTex, roughness: 0.8, envMapIntensity: 0.12 });
+  const kick = new THREE.Mesh(new THREE.BoxGeometry(BOARD_W, KICK_TOP, 0.018), [plyEdge, plyEdge, plyEdge, plyEdge, kickWood, plyEdge]);
+  kick.position.set(0, KICK_TOP / 2, -0.009); kick.receiveShadow = true;
   scene.add(kick);
-  const steel = new THREE.MeshStandardMaterial({ color: '#1d2027', roughness: 0.45, metalness: 0.6, envMapIntensity: 0.6 });
+  const kickBack = new THREE.Mesh(new THREE.BoxGeometry(BOARD_W, KICK_TOP, 0.12), steel);
+  kickBack.position.set(0, KICK_TOP / 2, -0.08);
+  scene.add(kickBack);
+  const hinge = new THREE.Mesh(new THREE.BoxGeometry(BOARD_W + 0.2, 0.01, 0.03), new THREE.MeshStandardMaterial({ color: '#0d0e10', roughness: 0.5, metalness: 0.5 }));
+  hinge.position.set(0, KICK_TOP, -0.005);
+  scene.add(hinge);
   for (const sx of [-1, 1]) {
-    const post = new THREE.Mesh(new THREE.BoxGeometry(0.1, KICK_TOP + 0.12, 0.12), steel);
-    post.position.set(sx * (BOARD_W / 2 + 0.07), (KICK_TOP + 0.12) / 2, -0.08);
+    const post = new THREE.Mesh(new THREE.BoxGeometry(0.1, KICK_TOP + 0.04, 0.15), steel);
+    post.position.set(sx * (BOARD_W / 2 + 0.05), (KICK_TOP + 0.04) / 2, -0.06);
     scene.add(post);
   }
+  // telescoping rear struts (outer tube from the floor, inner tube up to the board)
   const struts = [];
   for (const sx of [-1, 1]) {
-    const s = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.045, 1, 10), steel);
-    scene.add(s); struts.push({ mesh: s, sx });
+    const outer = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.045, 1, 12), steel);
+    const inner = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, 1, 12), steel);
+    scene.add(outer, inner); struts.push({ outer, inner, sx });
   }
   const backWall = new THREE.Mesh(new THREE.PlaneGeometry(40, 12), new THREE.MeshStandardMaterial({ color: '#10131a', roughness: 1 }));
   backWall.position.set(0, 6, -3.2);
@@ -243,78 +342,67 @@ export function createWorld({ canvas, holds, quality = 'mid', test = {} }) {
   const wall = new THREE.Group();
   wall.position.set(0, KICK_TOP, 0);
   scene.add(wall);
-  const panelWood = new THREE.MeshStandardMaterial({ map: woodTex, roughness: 0.82, envMapIntensity: 0.12 });
-  const edgeMat = new THREE.MeshStandardMaterial({ color: '#3a3027', roughness: 0.9 });
-  const panel = new THREE.Mesh(new THREE.BoxGeometry(BOARD_W, BOARD_H, 0.05), [edgeMat, edgeMat, edgeMat, edgeMat, panelWood, edgeMat]);
-  panel.position.set(0, BOARD_H / 2, -0.025); panel.receiveShadow = true;
+  const panelWood = new THREE.MeshStandardMaterial({ map: woodTex, roughness: 0.78, envMapIntensity: 0.12 });
+  const panel = new THREE.Mesh(new THREE.BoxGeometry(BOARD_W, BOARD_H, 0.018), [plyEdge, plyEdge, plyEdge, plyEdge, panelWood, plyEdge]);
+  panel.position.set(0, BOARD_H / 2, -0.009); panel.receiveShadow = true;
   wall.add(panel);
+  // matte black steel frame: side channels, top cap, a back box behind the ply
   for (const sx of [-1, 1]) {
-    const r = new THREE.Mesh(new THREE.BoxGeometry(0.09, BOARD_H + 0.1, 0.16), steel);
-    r.position.set(sx * (BOARD_W / 2 + 0.045), BOARD_H / 2, -0.07);
+    const r = new THREE.Mesh(new THREE.BoxGeometry(0.1, BOARD_H + 0.08, 0.15), steel);
+    r.position.set(sx * (BOARD_W / 2 + 0.05), BOARD_H / 2 + 0.04, -0.06);
     wall.add(r);
   }
-  const topRail = new THREE.Mesh(new THREE.BoxGeometry(BOARD_W + 0.18, 0.1, 0.16), steel);
-  topRail.position.set(0, BOARD_H + 0.05, -0.07);
+  const topRail = new THREE.Mesh(new THREE.BoxGeometry(BOARD_W + 0.2, 0.08, 0.15), steel);
+  topRail.position.set(0, BOARD_H + 0.04, -0.06);
   wall.add(topRail);
+  const back = new THREE.Mesh(new THREE.BoxGeometry(BOARD_W, BOARD_H, 0.1), steel);
+  back.position.set(0, BOARD_H / 2, -0.07);
+  wall.add(back);
+  // kickboard holds live in the vertical kickboard plane (a group at the hinge, not tilted)
+  const kickG = new THREE.Group();
+  kickG.position.set(0, KICK_TOP, 0);
+  scene.add(kickG);
 
-  // ---------- holds ----------
+  // ---------- holds: one InstancedMesh per (wall|kick) x type x variant ----------
   const shapes = {};
   for (const type of Object.keys(HOLD_SHAPE)) { shapes[type] = []; for (let v = 0; v < VARIANTS; v++) shapes[type].push(sculptHold(type, v)); }
-  const holdMat = new THREE.MeshStandardMaterial({ roughness: 0.66, metalness: 0, envMapIntensity: 0.28 });
+  const holdMat = new THREE.MeshStandardMaterial({ color: '#ffffff', vertexColors: true, roughness: 0.78, metalness: 0, envMapIntensity: 0.3 });
   const byId = {};
-  for (const h of holds) { byId[h.id] = h; h.variant = (h.id * 7 + 3) % VARIANTS; }
+  for (const h of holds) { byId[h.id] = h; h.variant = h.kick ? (h.id % 2) : (h.id * 7 + 3) % VARIANTS; }
   const _m4 = new THREE.Matrix4(), _qz = new THREE.Quaternion(), _sc = new V3(), _ps = new V3(), _z = new V3(0, 0, 1);
-  const ZERO = new THREE.Matrix4().makeScale(0, 0, 0);
-  const holdMatrix = (h, out) => { _qz.setFromAxisAngle(_z, h.rot); _sc.setScalar(h.size); _ps.set(h.x, h.y, 0.002); return out.compose(_ps, _qz, _sc); };
-  const inst = {}, instIndex = {};
-  for (const type of Object.keys(HOLD_SHAPE)) for (let v = 0; v < VARIANTS; v++) {
-    const list = holds.filter((h) => h.type === type && h.variant === v);
-    if (!list.length) continue;
-    const mesh = new THREE.InstancedMesh(shapes[type][v].geo, holdMat, list.length);
-    const col = new THREE.Color();
-    const muted = new THREE.Color('#4a4640');
+  const holdMatrix = (h, out) => { _qz.setFromAxisAngle(_z, h.rot); _sc.setScalar(h.size); _ps.set(h.x, h.y, 0.001); return out.compose(_ps, _qz, _sc); };
+  const groups = {};
+  for (const h of holds) { const key = (h.kick ? 'k:' : 'w:') + h.type + h.variant; (groups[key] ||= []).push(h); }
+  const tone = new THREE.Color(HOLD_TONE), col = new THREE.Color();
+  const instOf = {}; // hold id -> { mesh, i, base colour }
+  for (const key in groups) {
+    const list = groups[key], h0 = list[0];
+    const mesh = new THREE.InstancedMesh(shapes[h0.type][h0.variant].geo, holdMat, list.length);
+    const rnd = mulberry32(list.length * 31 + key.length);
     list.forEach((h, i) => {
       mesh.setMatrixAt(i, holdMatrix(h, _m4));
-      // holds that are not part of the problem are muted, so the lit route pops
-      mesh.setColorAt(i, col.set(HOLD_PALETTE[h.color]).lerp(muted, 0.5).multiplyScalar(0.78));
-      instIndex[h.id] = { key: type + v, i };
+      mesh.setColorAt(i, col.copy(tone).multiplyScalar(0.94 + rnd() * 0.12));
+      instOf[h.id] = { mesh, i, base: col.clone() };
     });
     mesh.instanceMatrix.needsUpdate = true;
     if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
     mesh.castShadow = true; mesh.receiveShadow = true;
-    wall.add(mesh);
-    inst[type + v] = mesh;
-  }
-  const chipMat = holdMat.clone();
-  for (let k = 0; k < 9; k++) {
-    const chip = new THREE.Mesh(shapes.chip[k % VARIANTS].geo, chipMat.clone());
-    chip.material.color.set(HOLD_PALETTE[(k * 3) % 7]);
-    chip.position.set(-1.5 + k * 0.38, 0.38 + (k % 3) * 0.12, 0.012);
-    scene.add(chip);
+    (h0.kick ? kickG : wall).add(mesh);
   }
 
-  // ---------- lit problem: LED rim at the base of each hold + soft glow on the wood ----------
-  // backlight under each lit hold: a filled disc that shows as a thick soft glow around the hold edge
-  const glowTex = canvasTex(renderer, 128, 128, (g, w) => {
-    const r = w / 2, gr = g.createRadialGradient(r, r, 0, r, r, r);
-    gr.addColorStop(0, 'rgba(255,255,255,1)'); gr.addColorStop(0.62, 'rgba(255,255,255,0.95)');
-    gr.addColorStop(0.8, 'rgba(255,255,255,0.32)'); gr.addColorStop(1, 'rgba(255,255,255,0)');
-    g.fillStyle = gr; g.fillRect(0, 0, w, w);
-  });
-  const rimGeo = new THREE.PlaneGeometry(2, 2);
-  const haloGeo = new THREE.PlaneGeometry(1, 1);
+  // ---------- lit problem: LED glow hugging each hold's outline + soft spill on the wood ----------
+  // filled shapes under the hold (never rings): the hold stays dark, the glow shows around its edge
   let ledGain = 1, haloK = 1;
   // LED colours are scaled to the same luminance so every colour blooms the same amount
   const ledColor = (hex, out) => { out.set(hex); const l = 0.2126 * out.r + 0.7152 * out.g + 0.0722 * out.b; return out.multiplyScalar(ledGain / Math.max(0.05, l)); };
+  const haloGeo = new THREE.PlaneGeometry(1, 1);
   let lit = [];
   const litById = {};
   function clearLit() {
     for (const L of lit) {
-      wall.remove(L.mesh, L.halo, L.rim);
-      L.mesh.material.dispose(); L.halo.material.dispose(); L.rim.material.dispose();
-      const ix = instIndex[L.id];
-      inst[ix.key].setMatrixAt(ix.i, holdMatrix(byId[L.id], _m4));
-      inst[ix.key].instanceMatrix.needsUpdate = true;
+      L.parent.remove(L.halo, L.rim);
+      L.halo.material.dispose(); L.rim.material.dispose();
+      tintHold(L, 0);
     }
     lit = [];
     for (const k in litById) delete litById[k];
@@ -326,54 +414,55 @@ export function createWorld({ canvas, holds, quality = 'mid', test = {} }) {
     entries.forEach((e, k) => {
       const h = byId[e.id];
       const shape = shapes[h.type][h.variant];
+      const parent = h.kick ? kickG : wall;
       const col = new THREE.Color(ROLE_HEX[e.role]);
-      const mat = new THREE.MeshStandardMaterial({ color: new THREE.Color(HOLD_PALETTE[h.color]).lerp(col, 0.2), emissive: col, emissiveIntensity: 0, roughness: 0.6, envMapIntensity: 0.5 });
-      const mesh = new THREE.Mesh(shape.geo, mat);
-      holdMatrix(h, _m4).decompose(mesh.position, mesh.quaternion, mesh.scale);
-      mesh.castShadow = true;
-      wall.add(mesh);
-      const ix = instIndex[e.id];
-      inst[ix.key].setMatrixAt(ix.i, ZERO);
-      inst[ix.key].instanceMatrix.needsUpdate = true;
-      const rimMesh = new THREE.Mesh(rimGeo, new THREE.MeshBasicMaterial({ map: glowTex, color: ledColor(ROLE_HEX[e.role], new THREE.Color()), transparent: true, opacity: 0, depthWrite: false }));
-      rimMesh.position.set(h.x, h.y, 0.004);
+      const rimMesh = new THREE.Mesh(shape.glow, new THREE.MeshBasicMaterial({ color: ledColor(ROLE_HEX[e.role], new THREE.Color()), vertexColors: true, transparent: true, opacity: 0, depthWrite: false }));
+      rimMesh.position.set(h.x, h.y, 0.0006);
       rimMesh.rotation.z = h.rot;
-      const rx = shape.rx * h.size * 1.3 + 0.018, ry = shape.ry * h.size * 1.3 + 0.018;
-      rimMesh.userData.base = new V3(rx, ry, 1);
-      rimMesh.scale.set(0.001, 0.001, 1);
+      rimMesh.userData.base = h.size;
+      rimMesh.scale.setScalar(0.001);
       rimMesh.renderOrder = 3;
-      wall.add(rimMesh);
+      parent.add(rimMesh);
       const halo = new THREE.Mesh(haloGeo, new THREE.MeshBasicMaterial({ map: haloTex, color: col, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false }));
-      const hs = Math.max(rx, ry) * 3.2 + 0.06;
-      halo.position.set(h.x, h.y, 0.003);
+      const hs = Math.max(shape.rx, shape.ry) * h.size * 2.2 + 0.04;
+      halo.position.set(h.x, h.y, 0.0003);
       halo.scale.setScalar(0.001);
       halo.renderOrder = 2;
-      wall.add(halo);
-      const L = { id: e.id, role: e.role, mesh, halo, rim: rimMesh, hs, on: !!instant, t0: instant ? -10 : Infinity, order: k };
+      parent.add(halo);
+      const L = { id: e.id, role: e.role, parent, halo, rim: rimMesh, hs, led: col, tint: 0, on: !!instant, t0: instant ? -10 : Infinity, order: k };
       lit.push(L); litById[e.id] = L;
     });
+  }
+  // the LED under a lit hold also lights the hold itself, so a lit hold reads as a filled colour
+  const _tc = new THREE.Color();
+  function tintHold(L, k) {
+    if (Math.abs((L.tint ?? 0) - k) < 0.02) return;
+    L.tint = k;
+    const I = instOf[L.id];
+    _tc.copy(I.base).lerp(L.led, 0.6 * k).multiplyScalar(1 + 0.5 * k);
+    I.mesh.setColorAt(I.i, _tc);
+    I.mesh.instanceColor.needsUpdate = true;
   }
   function scheduleSweep(t0) { lit.forEach((L, k) => { L.on = false; L.t0 = t0 + k * 0.065; }); }
   function revealAll(t) { for (const L of lit) if (L.t0 > t) L.t0 = t - 0.3; }
   function updateLit(now, nextId, onFirstOn) {
     for (const L of lit) {
       const dt = now - L.t0;
-      if (dt < 0) { L.halo.material.opacity = 0; L.rim.material.opacity = 0; L.mesh.material.emissiveIntensity = 0; continue; }
+      if (dt < 0) { L.halo.material.opacity = 0; L.rim.material.opacity = 0; tintHold(L, 0); continue; }
       if (!L.on) { L.on = true; if (onFirstOn) onFirstOn(L); }
       const e = Math.min(1, dt / 0.22);
       let sc = dt < 0.22 ? easeOutBack(e) : 1;
       const fade = Math.min(1, dt / 0.08);
-      let op = 0.42 * fade * haloK, em = 0.32;
+      let op = 0.5 * fade * haloK;
       if (L.id === nextId) {
         const pz = 0.5 + 0.5 * Math.sin(now * 6.5);
-        sc *= 1 + 0.12 * pz; op = (0.4 + 0.4 * pz) * haloK; em = 0.35 + 0.45 * pz;
+        sc *= 1 + 0.1 * pz; op = (0.45 + 0.45 * pz) * haloK;
       }
-      const b = L.rim.userData.base;
-      L.rim.scale.set(b.x * sc, b.y * sc, 1);
+      L.rim.scale.setScalar(L.rim.userData.base * sc);
       L.rim.material.opacity = fade;
       L.halo.scale.setScalar(L.hs * sc);
       L.halo.material.opacity = op;
-      L.mesh.material.emissiveIntensity = em;
+      tintHold(L, fade * (L.id === nextId ? 0.8 + 0.2 * Math.sin(now * 6.5) : 0.8));
     }
   }
   function setLedGain(gain, halo) {
@@ -424,12 +513,15 @@ export function createWorld({ canvas, holds, quality = 'mid', test = {} }) {
     key.target.position.copy(center);
     key.target.updateMatrixWorld();
     for (const s of struts) {
-      const top = wall.localToWorld(new V3(s.sx * 1.25, 2.3, -0.08));
+      const top = wall.localToWorld(new V3(s.sx * 1.25, 2.3, -0.12));
       const bot = new V3(s.sx * 1.25, 0.02, -1.3);
-      s.mesh.position.addVectors(top, bot).multiplyScalar(0.5);
-      const d = new V3().subVectors(top, bot);
-      s.mesh.scale.set(1, d.length(), 1);
-      s.mesh.quaternion.setFromUnitVectors(new V3(0, 1, 0), d.normalize());
+      const d = new V3().subVectors(top, bot), len = d.length();
+      d.normalize();
+      const q = new THREE.Quaternion().setFromUnitVectors(new V3(0, 1, 0), d);
+      const lo = Math.min(1.1, len * 0.6); // outer tube length; the inner tube slides out of it
+      s.outer.scale.set(1, lo, 1); s.outer.quaternion.copy(q); s.outer.position.copy(bot).addScaledVector(d, lo / 2);
+      const li = len - lo + 0.15;
+      s.inner.scale.set(1, li, 1); s.inner.quaternion.copy(q); s.inner.position.copy(top).addScaledVector(d, -li / 2);
     }
   }
   function worldYOf(local) { const th = deg(angle); return KICK_TOP + local.y * Math.cos(th) - local.z * Math.sin(th); }
@@ -462,6 +554,7 @@ export function createWorld({ canvas, holds, quality = 'mid', test = {} }) {
   function setQuality(name) {
     if (tier === name) return;
     tier = name;
+    scene.userData.tier = name; // the climber reads it for its outline width / fake shadow
     Q = { ...QUALITY[name], ...(test.quality || {}) };
     const dpr = Math.min(window.devicePixelRatio || 1, Q.dpr);
     renderer.setPixelRatio(dpr);
