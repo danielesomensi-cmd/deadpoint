@@ -705,6 +705,30 @@ export class Sound {
     for (const s of [n.src, n.lfo, n.bias]) if (s) { try { s.stop(t + 0.05); } catch (e) { /* already stopped */ } }
     this.restNode = null;
   }
+  // bubbles: a soft rising blip when one appears, a pop when tapped
+  bubble(kind) {
+    if (!this.ctx) return;
+    const t = this.now(), hi = kind === 'jump';
+    this.tone({ t, f: hi ? 660 : 520, f2: hi ? 1320 : 880, dur: hi ? 0.1 : 0.14, g: 0.05, glide: 0.09, wave: 'triangle' });
+  }
+  pop(kind) {
+    if (!this.ctx) return;
+    const t = this.now();
+    this.tone({ t, f: 900, f2: 1800, dur: 0.05, g: 0.08, glide: 0.04 });
+    this.noise({ t, dur: 0.04, buf: 'white', type: 'bandpass', f: 3200, Q: 1.5, g: 0.1 });
+    if (kind === 'chalk') { // hand in the bag: a dry pat and a puff
+      this.noise({ t: t + 0.12, dur: 0.08, buf: 'pink', type: 'bandpass', f: 900, Q: 0.9, g: 0.16 });
+      this.noise({ t: t + 0.34, dur: 0.35, buf: 'white', type: 'bandpass', f: 2600, f2: 1200, Q: 0.7, g: 0.07, a: 0.02 });
+    } else if (kind === 'jump') {
+      this.tone({ t: t + 0.04, f: mtof(76), dur: 0.12, g: 0.06, wave: 'triangle' });
+      this.tone({ t: t + 0.1, f: mtof(83), dur: 0.18, g: 0.06, wave: 'triangle' });
+    }
+  }
+  // jump bubble countdown blip (one per remaining step)
+  countTick(n) {
+    if (!this.ctx) return;
+    this.tone({ t: this.now(), f: mtof(84 - n * 2), dur: 0.035, g: 0.04, wave: 'square', lp: 2500 });
+  }
   ledBlip(i) {
     if (!this.ctx) return;
     const t = this.now();

@@ -114,6 +114,21 @@ button:focus-visible { outline: 2px solid var(--led-hand); outline-offset: 2px; 
 #btnRest.hit { animation: btnHit .12s ease-out; }
 @keyframes btnHit { 40% { transform: scale(.9); background-color: rgba(255,255,255,.35); } }
 
+/* bubbles: white, readable on the board, never LED colours */
+#bubbles { position: fixed; inset: 0; z-index: 4; pointer-events: none; overflow: hidden; }
+.bubble { position: absolute; left: 0; top: 0; pointer-events: auto; touch-action: none; padding: 0; border-radius: 50%;
+  display: grid; place-items: center; align-content: center; color: #12161f; -webkit-tap-highlight-color: transparent; will-change: transform; }
+.bubble.chalk { width: 72px; height: 72px; border: 2px solid rgba(18,22,31,.55);
+  background: radial-gradient(circle at 35% 30%, #fff, rgba(255,255,255,.88) 55%, rgba(225,222,214,.82));
+  box-shadow: 0 4px 14px rgba(0,0,0,.45), inset 0 -4px 8px rgba(0,0,0,.08); animation: bubIn .25s ease-out, bubBob 1.4s ease-in-out infinite alternate; }
+.bubble.chalk svg { width: 28px; height: 28px; fill: none; stroke: #12161f; stroke-width: 2; stroke-linejoin: round; }
+.bubble.chalk svg circle { fill: #12161f; stroke: none; }
+.bubble span { font-size: 10px; font-weight: 800; letter-spacing: .08em; line-height: 1; margin-top: 1px; }
+.bubble.pop { animation: bubPop .25s ease-out forwards !important; pointer-events: none; }
+@keyframes bubIn { from { scale: .3; } }
+@keyframes bubBob { to { scale: 1.06; } }
+@keyframes bubPop { to { scale: 1.7; opacity: 0; } }
+
 #tip { position: fixed; z-index: 6; pointer-events: none; padding: 9px 12px 8px; border-radius: 10px; background: #efe9dc; color: #12161f;
   font-size: 15px; font-weight: 700; line-height: 1.25; text-align: center; box-shadow: 0 6px 18px rgba(0,0,0,.5); }
 #tip.show { animation: cardIn .3s cubic-bezier(.2,.9,.3,1.2); }
@@ -182,6 +197,6 @@ button:focus-visible { outline: 2px solid var(--led-hand); outline-offset: 2px; 
   background: var(--led-finish); color: #12161f; }
 #pause { background: rgba(11,13,18,.88); justify-content: center; }
 #fatal { position: fixed; inset: 0; z-index: 9; display: grid; place-items: center; padding: var(--gut); text-align: center; background: var(--night); }
-@media (prefers-reduced-motion: reduce) { .card-in, #toast.show, #btnMain.hit, #btnRest.hit { animation: none; } }
+@media (prefers-reduced-motion: reduce) { .card-in, #toast.show, #btnMain.hit, #btnRest.hit, .bubble { animation: none !important; } }
 
 #fade { position: fixed; inset: 0; z-index: 4; pointer-events: none; background: var(--night); opacity: 0; }

@@ -36,9 +36,23 @@ const BOT = String.raw`(() => {
   // mash the rest button (~8 taps/s) until the target energy, then let the main loop go on
   B.mash = (target) => { B.busy = true; B.pend = { mash: true, at: 0, target }; };
   B.stop = () => { B.pend = null; B.busy = false; B.on = false; };
+  // bubbles: tap each one (by its DOM element, like a finger) ~0.35 s after it shows up
+  B.bub = true; B.bubTaps = {}; const bubSeen = new Map();
+  function bubbles(D) {
+    const A = D.attempt; if (!B.bub || !A || A.done) return;
+    for (const k in A.bubbles) {
+      const b = A.bubbles[k];
+      if (!bubSeen.has(b)) bubSeen.set(b, D.simT + 0.35);
+      if (D.simT >= bubSeen.get(b)) {
+        const el = document.querySelector('.bubble.' + k + ':not(.pop)');
+        if (el) { fireOn(el); B.bubTaps[k] = (B.bubTaps[k] || 0) + 1; bubSeen.set(b, Infinity); }
+      }
+    }
+  }
   function step() {
     requestAnimationFrame(step);
     const D = window.__DP; if (!D || D.paused) return;
+    bubbles(D);
     if (B.pend && B.pend.mash) {
       const A = D.attempt, p = B.pend;
       if (!A || A.done || !A.canRest || A.energy >= p.target) { B.pend = null; B.busy = false; return; }
@@ -137,6 +151,7 @@ try {
     report.taps = await ev('__bot.taps');
     report.rests = await ev('__bot.rests');
     report.shakes = await ev('__bot.shakes || 0');
+    report.bubble_taps = await ev('__bot.bubTaps');
     // the body is the timing cue: the pelvis must stop rising on the deadpoint (±15 ms)
     const apexLog = await ev('__DP.apexLog.slice()');
     const sorted = apexLog.slice().sort((x, y) => x - y);

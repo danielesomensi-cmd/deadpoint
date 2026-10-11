@@ -4,8 +4,10 @@ import { Session, TUNE, mulberry32, GRADES, MAX_G } from '../src/logic.js';
 
 // Usage: node test/sim.mjs [sessions=500] [profiles=all|novice,good] [TUNE overrides k=v,k=v] [--check]
 //   --check: exit 1 if the median best grade of a profile leaves its target band (used in CI)
-const ARGS = process.argv.slice(2).filter((a) => a !== '--check');
+//   --nobubbles: nobody taps the chalk / jump / allez bubbles
+const ARGS = process.argv.slice(2).filter((a) => !a.startsWith('--'));
 const CHECK = process.argv.includes('--check');
+const NO_BUBBLES = process.argv.includes('--nobubbles'); // players ignore every bubble (for comparison)
 const N = +(ARGS[0] || 500);
 const ONLY = ARGS[1] && ARGS[1] !== 'all' ? ARGS[1] : null;
 if (ARGS[2]) for (const kv of ARGS[2].split(',')) { const [k, v] = kv.split('='); TUNE[k] = +v; }
@@ -15,11 +17,12 @@ const MEDIANS = {};
 
 export const PROFILES = {
   // rest: when to mash the rest button (only lit with a hand on a jug) and how fast (taps/s)
-  novice:     { sigma: 0.085, bias: 0.015, think: [0.8, 0.3],  rest: { below: 35, until: 75, tps: 5 } },
-  casual:     { sigma: 0.062, bias: 0.008, think: [0.6, 0.2],  rest: { below: 45, until: 85, tps: 6 } },
-  good:       { sigma: 0.045, bias: 0.0,   think: [0.45, 0.15], rest: { smart: true, tps: 7 } },
-  goodNoRest: { sigma: 0.045, bias: 0.0,   think: [0.45, 0.15], rest: null },
-  expert:     { sigma: 0.030, bias: 0.0,   think: [0.35, 0.1],  rest: { smart: true, tps: 8 } },
+  // bub: chance of going for a bubble at all, and the reaction time to reach it [mean, sd] (s)
+  novice:     { sigma: 0.085, bias: 0.015, think: [0.8, 0.3],  rest: { below: 35, until: 75, tps: 5 }, bub: { p: 0.5, react: [1.0, 0.3] } },
+  casual:     { sigma: 0.062, bias: 0.008, think: [0.6, 0.2],  rest: { below: 45, until: 85, tps: 6 }, bub: { p: 0.7, react: [0.8, 0.25] } },
+  good:       { sigma: 0.045, bias: 0.0,   think: [0.45, 0.15], rest: { smart: true, tps: 7 }, bub: { p: 0.85, react: [0.65, 0.2] } },
+  goodNoRest: { sigma: 0.045, bias: 0.0,   think: [0.45, 0.15], rest: null, bub: { p: 0.85, react: [0.65, 0.2] } },
+  expert:     { sigma: 0.030, bias: 0.0,   think: [0.35, 0.1],  rest: { smart: true, tps: 8 }, bub: { p: 0.92, react: [0.55, 0.15] } },
 };
 
 function gaussFactory(rnd) {
@@ -73,18 +76,31 @@ function decide(A, prof, gauss, t) {
 export function runSession(prof, seed) {
   const S = new Session({ seed });
   const gauss = gaussFactory(mulberry32(seed ^ 0x5bd1e995));
+  const bubRnd = mulberry32(seed ^ 0x2545f491);
   let t = 0;
   const rec = { attempts: [], time: 0 };
   while (!S.over) {
     const A = S.startAttempt();
-    A.update(t);
+    // bubbles: decide once per bubble whether and when to tap it (the bubble's own life decides if in time)
+    const seen = new Set(), taps = [];
+    const step = (tt) => {
+      A.update(tt);
+      for (const k in A.bubbles) {
+        const b = A.bubbles[k];
+        if (seen.has(b)) continue;
+        seen.add(b);
+        if (!NO_BUBBLES && prof.bub && bubRnd() < prof.bub.p) taps.push({ k, at: b.t0 + Math.max(0.2, prof.bub.react[0] + gauss() * prof.bub.react[1]) });
+      }
+      for (let i = taps.length - 1; i >= 0; i--) if (taps[i].at <= tt) { A.tapBubble(taps[i].k, tt); taps.splice(i, 1); }
+    };
+    step(t);
     let plan = null;
     let guard = 0;
     while (!A.done && guard++ < 200000) {
       if (!plan) { plan = decide(A, prof, gauss, t); plan.state = A.state; plan.phase = 'pending'; }
       if (plan.phase === 'pending') {
         const at = Math.max(plan.at, t);
-        while (t + DT < at && !A.done && A.state === plan.state) { t += DT; A.update(t); }
+        while (t + DT < at && !A.done && A.state === plan.state) { t += DT; step(t); }
         if (A.done) break;
         if (A.state !== plan.state) { plan = null; continue; }
         t = at;
@@ -92,7 +108,7 @@ export function runSession(prof, seed) {
       } else {
         // mashing the rest button: one tap every 1/tps s (with some jitter) until the target
         const next = t + Math.max(0.05, (1 + 0.15 * gauss()) / prof.rest.tps);
-        while (t + DT < next && !A.done) { t += DT; A.update(t); }
+        while (t + DT < next && !A.done) { t += DT; step(t); }
         if (A.done) break;
         t = next;
         if (A.energy >= plan.target || A.energy >= A.maxEnergy - 0.5 || ++plan.n > 90 || !A.canRest) { plan = null; continue; }

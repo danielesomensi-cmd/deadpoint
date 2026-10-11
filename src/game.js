@@ -68,6 +68,7 @@ export function startGame() {
   const TEACH = !TEST || !!window.__DP_TEACH;  // first catch ever: time stops at the apex until the tap
   let teachHold = false;
   let hitstop = 0, snapUntil = 0;
+  let chalkAnim = null; // chalk bubble tapped: { t0, hand, puffed } (a hand goes to the bag)
   const beat = { key: -1, next: 0 };
   const cue = { key: -1, drive: false, hush: false };
   const apex = { key: -1, dp: 0, y: 0, t: 0, last: 0, log: [] }; // test: when the pelvis stops rising vs the deadpoint
@@ -250,6 +251,20 @@ export function startGame() {
         expr = 'effort';
         break;
       }
+      case 'hang': {
+        // chalk up: one hand dips into the bag behind the hips, a pat and a puff, back on the hold
+        const ca = chalkAnim, k = ca ? (simT - ca.t0) / 0.8 : 1;
+        if (k < 1) {
+          const Hc = ca.hand === 'L' ? CT.HL : CT.HR;
+          const reach = Math.sin(Math.PI * clamp(k, 0, 1));
+          tA.copy(climber.bagPos).addScaledVector(NRM, 0.03).addScaledVector(climber.g, -0.06);
+          tA.addScaledVector(climber.right, Math.sin(simT * 30) * 0.015 * reach);
+          Hc.lerp(tA, smoothstep(reach * 1.6));
+          setHand(ca.hand, true);
+          if (!ca.puffed && k > 0.45) { ca.puffed = true; world.puff(tA.clone(), 7, 0.6); }
+        }
+        break;
+      }
     }
     climber.setExpr(expr);
   }
@@ -379,7 +394,7 @@ export function startGame() {
   }
 
   function goTitle() {
-    paused = false; $('pause').hidden = true; tipEl.hidden = true;
+    paused = false; $('pause').hidden = true; tipEl.hidden = true; clearBubbles();
     mode = 'title';
     clearTimers(); fade = null;
     sfx.stopRest(); sfx.setPump(0); sfx.setLevel(0);
@@ -522,6 +537,21 @@ export function startGame() {
           toast(e.flash ? 'FLASH!' : 'TOP!', t('topLine', fmt(attempt.score), st.perfect, moves, edge), e.flash ? ROLE_HEX.foot : ROLE_HEX.finish, 2.4);
           after(0.95, () => { if (mode === 'topped') climber.fall('drop'); });
           after(2.8, () => { if (mode === 'topped') endAttempt(); });
+          break;
+        }
+        case 'bubble': sfx.bubble(e.b.kind); break;
+        case 'bubbleTap': {
+          sfx.pop(e.kind);
+          vibrate(10);
+          if (e.kind === 'chalk') {
+            const st = attempt.state;
+            if (st === 'hang') {
+              // the hand on the worse hold goes to the bag (the other one holds on)
+              const r = (id) => HOLD_TYPES[HOLD_BY_ID[id].type].win;
+              chalkAnim = { t0: simT, hand: r(attempt.L) < r(attempt.R) ? 'L' : 'R', puffed: false };
+            } else for (const h of ['hL', 'hR']) world.puff(climber.J[h].clone(), 4, 0.5);
+            popup(climber.S.clone().addScaledVector(BUP, 0.25), t('chalkUp'), t('chalkSub', TUNE.chalkCatches), '#ffffff', 0.85);
+          }
           break;
         }
         case 'restStart': sfx.startRest(); break;
@@ -897,6 +927,70 @@ export function startGame() {
     return s;
   }
 
+  // ===================== Bubbles (chalk, jump, allez) =====================
+  // DOM buttons over the scene, kept inside the free area between the HUD and the bottom controls.
+  // A bubble tap is its own input: it never reaches the main button.
+  const bubLayer = $('bubbles');
+  const bubEls = new Map(); // bubble object -> element
+  const BUB_R = { chalk: 36, jump: 38 };
+  const BUB_SPEED = { chalk: 22, jump: 170 }; // px/s
+  function bubbleArea() {
+    let bottom = Math.min(mainBtn.getBoundingClientRect().top, restBtn.getBoundingClientRect().top);
+    for (const id of ['hintText', 'nextChip']) {
+      const el = $(id), r = el.getBoundingClientRect();
+      if (r.height > 0 && el.textContent && el.style.visibility !== 'hidden') bottom = Math.min(bottom, r.top);
+    }
+    return { left: 12, right: W - 12, top: $('hud').getBoundingClientRect().bottom + 10, bottom: bottom - 10 };
+  }
+  // random start (u, v) in the area, straight drift that bounces off its edges
+  const bounce = (v, m) => { v = ((v % (2 * m)) + 2 * m) % (2 * m); return v > m ? 2 * m - v : v; };
+  function bubbleXY(b, R, A) {
+    const w = Math.max(1, A.right - A.left - 2 * R), h = Math.max(1, A.bottom - A.top - 2 * R);
+    const age = Math.max(0, simT - b.t0), sp = BUB_SPEED[b.kind] || 0;
+    return { x: A.left + R + bounce(b.u * w + Math.cos(b.a) * sp * age, w), y: A.top + R + bounce(b.v * h + Math.sin(b.a) * sp * age, h) };
+  }
+  const BUB_HTML = {
+    chalk: () => `<svg viewBox="0 0 32 32" aria-hidden="true"><path d="M9 12h14l-1.5 13a2 2 0 0 1-2 1.8h-7a2 2 0 0 1-2-1.8z"/><path d="M8 12c0-2 2-3 8-3s8 1 8 3"/><circle cx="12" cy="6" r="1.4"/><circle cx="17" cy="4.5" r="1.1"/><circle cx="21" cy="6.5" r="1.3"/></svg><span>${t('bubChalk')}</span>`,
+  };
+  function makeBubble(b) {
+    const el = document.createElement('button');
+    el.className = 'bubble ' + b.kind;
+    el.tabIndex = -1;
+    el.setAttribute('aria-label', t('bubAria_' + b.kind));
+    el.innerHTML = BUB_HTML[b.kind] ? BUB_HTML[b.kind](b) : '';
+    el.addEventListener('pointerdown', (e) => {
+      e.preventDefault(); e.stopPropagation();
+      if (paused || !attempt || el.dataset.popped) return;
+      if (attempt.tapBubble(b.kind, evTime(e))) { el.dataset.popped = '1'; el.classList.add('pop'); }
+    }, { passive: false });
+    el.addEventListener('contextmenu', (e) => e.preventDefault());
+    bubLayer.appendChild(el);
+    return el;
+  }
+  function dropBubble(b, el) {
+    bubEls.delete(b);
+    if (el.dataset.popped) setTimeout(() => el.remove(), 260); // the pop animation plays out
+    else el.remove();
+  }
+  function syncBubbles() {
+    const A = attempt;
+    const live = A && mode === 'climb' && !A.done ? A.bubbles : {};
+    for (const [b, el] of bubEls) if (live[b.kind] !== b || el.dataset.popped) dropBubble(b, el);
+    let area = null;
+    for (const k in live) {
+      const b = live[k];
+      let el = bubEls.get(b), fresh = false;
+      if (!el) { el = makeBubble(b); bubEls.set(b, el); fresh = true; }
+      area = area || bubbleArea();
+      const R = BUB_R[k] || 36, p = bubbleXY(b, R, area);
+      el.style.transform = `translate(${Math.round(p.x - R)}px, ${Math.round(p.y - R)}px)`;
+      const left = b.t0 + b.life - simT;
+      el.style.opacity = String(clamp(left / 0.35, 0, 1));
+      if (fresh) tip('bubble_' + k, el, t('tip_' + k));
+    }
+  }
+  function clearBubbles() { for (const [b, el] of bubEls) { el.remove(); bubEls.delete(b); } }
+
   // ===================== One-time tips (new controls and bubbles) =====================
   // a small callout next to the thing it explains, shown once ever per key (localStorage deadpoint:tips)
   const tipEl = $('tip'), tipsSeen = store.get('tips', {});
@@ -1094,6 +1188,7 @@ export function startGame() {
       world.updatePads(simT);
     }
     if (mode !== 'title') updateHud(false);
+    syncBubbles();
     updateCamera(dt, now / 1000);
     world.render();
     drawFX();

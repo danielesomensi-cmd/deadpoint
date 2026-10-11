@@ -88,6 +88,9 @@ export const TUNE = {
   latency: 0.03,         // default input/display latency compensation (s)
   latencyMin: -0.01, latencyMax: 0.07, latencyRate: 0.05,
   grace: 0.12,           // ignore double-taps right after a launch/catch
+  // chalk bubble: every 2-3 hand moves, lives chalkLife s; tapped = the next chalkCatches catches get
+  // wider windows and the hang drains less
+  chalkLife: 2.0, chalkCatches: 3, chalkWin: 1.15, chalkDrain: 0.9,
   attempts: 3,
 };
 
@@ -355,7 +358,32 @@ export class Attempt {
     this.result = null;
     this.fallReason = null;
     this.last = null; // last judgement {q, off}
+    // bubbles (chalk, jump, allez): seeded by the problem and the attempt number, so a seed
+    // (e.g. the daily problem) always plays the same
+    this.rng = mulberry32(((problem.seed >>> 0) ^ Math.imul(session.attemptNo || 1, 0x9e3779b1)) >>> 0);
+    this.bubbles = {};      // live bubbles by kind: { kind, t0, life, u, v, a }
+    this.chalkIn = 2 + (this.rng() < 0.5 ? 0 : 1); // hand moves until the next chalk bubble
+    this.chalk = 0;         // catches left with the chalk bonus
   }
+  // a bubble at a random spot (u, v in 0..1 of the free screen area) drifting along angle a
+  spawnBubble(kind, life, extra = {}) {
+    const b = { kind, t0: this.t, life, u: this.rng(), v: this.rng(), a: this.rng() * Math.PI * 2, ...extra };
+    this.bubbles[kind] = b;
+    this.emit('bubble', { b });
+    return b;
+  }
+  // tap on a bubble: true if it was live
+  tapBubble(kind, t) {
+    this.update(t);
+    const b = this.bubbles[kind];
+    if (!b || this.done || t > b.t0 + b.life) return false;
+    delete this.bubbles[kind];
+    if (kind === 'chalk') { this.chalk = TUNE.chalkCatches; this.stats.chalk = (this.stats.chalk || 0) + 1; }
+    this.emit('bubbleTap', { kind, b });
+    return true;
+  }
+  // a judged catch (hand, feet, match) uses up one charge of the bonuses
+  useBonus() { if (this.chalk > 0) this.chalk--; }
   hold(id) { return this.S.boardById[id]; }
   type(id) { return HOLD_TYPES[this.hold(id).type]; }
   emit(type, data = {}) { this.events.push({ type, t: this.t, ...data }); }
@@ -365,6 +393,7 @@ export class Attempt {
   windows(typeKey, mult = 1) {
     const gp = gradeParams(this.g);
     const pump = this.energy >= 40 ? 1 : 0.72 + 0.28 * (this.energy / 40);
+    if (this.chalk > 0) mult *= TUNE.chalkWin;
     const k = gp.win * HOLD_TYPES[typeKey].win * pump * mult;
     return { perfect: TUNE.win.perfect * k, good: TUNE.win.good * k, ok: TUNE.win.ok * k };
   }
@@ -385,7 +414,7 @@ export class Attempt {
     const base = TUNE.drainBase(this.angle);
     const dL = this.type(this.L).drain, dR = this.type(this.R).drain;
     switch (this.state) {
-      case 'hang': return -base * (dL + dR) / 2;
+      case 'hang': return -base * (dL + dR) / 2 * (this.chalk > 0 ? TUNE.chalkDrain : 1);
       case 'flight': return -base * (this.flight.mv.hand === 'L' ? dR : dL) * TUNE.flightDrain;
       case 'feet': return -base * (dL + dR) / 2 * TUNE.feetDrain;
       case 'match': return -base * (dL + dR) / 2;
@@ -422,6 +451,10 @@ export class Attempt {
     if (dt > 0.25) dt = 0.25;
     this.t = t;
     if (this.done) return;
+    for (const k in this.bubbles) {
+      const b = this.bubbles[k];
+      if (t > b.t0 + b.life) { delete this.bubbles[k]; this.emit('bubbleGone', { kind: k }); }
+    }
     if (this.state === 'rest' && t - this.lastShake > TUNE.shakeHold) { this.state = 'hang'; this.emit('restEnd'); }
     if (this.state !== 'ready') {
       this.energy += this.energyRate() * dt;
@@ -487,7 +520,12 @@ export class Attempt {
     this.stanceIdx = this.moveIdx;
     this.last = { q, off };
     this.flight = null;
+    this.useBonus();
     this.emit('catch', { q, off, cost, pts, mv, combo: this.combo });
+    if (!mv.finish && --this.chalkIn <= 0) {
+      this.chalkIn = 2 + (this.rng() < 0.5 ? 0 : 1);
+      this.spawnBubble('chalk', TUNE.chalkLife);
+    }
     if (this.energy <= 0) { this.energy = 0; this.fall('pump'); return; }
     if (mv.finish) {
       this.state = 'match';
@@ -524,6 +562,7 @@ export class Attempt {
     this.feet = null;
     this.state = 'hang';
     this.last = { q, off };
+    this.useBonus();
     this.emit('feetCatch', { q, off, pts, combo: this.combo });
     if (this.energy <= 0) { this.energy = 0; this.fall('pump'); }
   }
@@ -559,6 +598,7 @@ export class Attempt {
     const bonus = Math.round((400 + 150 * this.g) * flashMult + this.energy * 4);
     this.score += pts + bonus;
     this.last = { q, off };
+    this.useBonus();
     this.match = null;
     this.state = 'top';
     this.result = 'top';
