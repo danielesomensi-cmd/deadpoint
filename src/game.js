@@ -1,6 +1,6 @@
 // DEADPOINT — game flow, input, HUD, camera, and choreography (what the climber does, when).
 import * as THREE from 'three';
-import { Session, TUNE, HOLD_TYPES, GRADES, gradeLabel, gradeParams, makeBoard, clamp, BOARD_H, BOARD_W, KICK_TOP, MAT_TOP } from './logic.js';
+import { Session, TUNE, HOLD_TYPES, GRADES, gradeLabel, gradeParams, makeBoard, clamp, BOARD_H, BOARD_W, KICK_TOP, MAT_TOP, LADDER, migrateGrade } from './logic.js';
 import { Sound } from './audio.js';
 import { createWorld, gripPos as holdGrip, footPos, ROLE_HEX } from './world.js';
 import { Climber } from './climber.js';
@@ -25,7 +25,17 @@ const store = {
   set(k, v) { try { localStorage.setItem('deadpoint:' + k, JSON.stringify(v)); } catch (e) { /* storage unavailable */ } },
 };
 
+// grade indices in localStorage follow the ladder of the day they were written: 7b was added at
+// index 8 (ladder 2), so older bests from 7b+ up move one step to keep their label
+function migrateStore() {
+  const from = store.get('ladder', 1);
+  if (from >= LADDER) return;
+  for (const k of ['bestG', 'startG']) { const g = store.get(k, null); if (typeof g === 'number') store.set(k, migrateGrade(g, from)); }
+  store.set('ladder', LADDER);
+}
+
 export function startGame() {
+  migrateStore();
   const sfx = new Sound();
   sfx.muted = !!store.get('muted', false);
   const BOARD_HOLDS = makeBoard();
@@ -550,7 +560,7 @@ export function startGame() {
               const r = (id) => HOLD_TYPES[HOLD_BY_ID[id].type].win;
               chalkAnim = { t0: simT, hand: r(attempt.L) < r(attempt.R) ? 'L' : 'R', puffed: false };
             } else for (const h of ['hL', 'hR']) world.puff(climber.J[h].clone(), 4, 0.5);
-            popup(climber.S.clone().addScaledVector(BUP, 0.25), t('chalkUp'), t('chalkSub', TUNE.chalkCatches), '#ffffff', 0.85);
+            popup(climber.S.clone().addScaledVector(BUP, 0.25), t('chalkUp'), t('chalkSub', attempt.chalk), '#ffffff', 0.85);
           }
           if (e.kind === 'jump') {
             popup(climber.S.clone().addScaledVector(BUP, 0.3), t('jumpArmed'), t('jumpSub'), '#ffffff', 1.05);

@@ -1,6 +1,6 @@
 // Balance simulator: plays full sessions with simulated players of different skill,
 // using the exact game rules from src/logic.js.
-import { Session, TUNE, mulberry32, GRADES, MAX_G } from '../src/logic.js';
+import { Session, TUNE, mulberry32, GRADES, MAX_G, gradeParams } from '../src/logic.js';
 
 // Usage: node test/sim.mjs [sessions=500] [profiles=all|novice,good] [TUNE overrides k=v,k=v] [--check]
 //   --check: exit 1 if the median best grade of a profile leaves its target band (used in CI)
@@ -11,8 +11,9 @@ const NO_BUBBLES = process.argv.includes('--nobubbles'); // players ignore every
 const N = +(ARGS[0] || 500);
 const ONLY = ARGS[1] && ARGS[1] !== 'all' ? ARGS[1] : null;
 if (ARGS[2]) for (const kv of ARGS[2].split(',')) { const [k, v] = kv.split('='); TUNE[k] = +v; }
-// target bands for the median best grade (index into GRADES: 0 = V0 ... 13 = V13)
-const BANDS = { novice: [1, 5], casual: [4, 8], good: [6, 10], goodNoRest: [3, 8], expert: [8, 13] };
+// target bands for the median best grade (index into GRADES: 0 = 4, 3 = 6a+, 6 = 7a, 8 = 7b, 12 = 8a, 14 = 8b).
+// 7b is hard for a good player, 8a needs near-perfect timing (pro).
+const BANDS = { novice: [2, 5], casual: [4, 7], good: [6, 8], goodNoRest: [5, 7], expert: [7, 9], pro: [9, 12] };
 const MEDIANS = {};
 
 export const PROFILES = {
@@ -22,6 +23,7 @@ export const PROFILES = {
   casual:     { sigma: 0.062, bias: 0.008, think: [0.6, 0.2],  rest: { below: 45, until: 85, tps: 6 }, bub: { p: 0.7, react: [0.8, 0.25] } },
   good:       { sigma: 0.045, bias: 0.0,   think: [0.45, 0.15], rest: { smart: true, tps: 7 }, bub: { p: 0.85, react: [0.65, 0.2] } },
   goodNoRest: { sigma: 0.045, bias: 0.0,   think: [0.45, 0.15], rest: null, bub: { p: 0.85, react: [0.65, 0.2] } },
+  pro:        { sigma: 0.018, bias: 0.0,   think: [0.3, 0.08],  rest: { smart: true, tps: 9 }, bub: { p: 0.95, react: [0.45, 0.12] } },
   expert:     { sigma: 0.030, bias: 0.0,   think: [0.35, 0.1],  rest: { smart: true, tps: 8 }, bub: { p: 0.92, react: [0.55, 0.15] } },
 };
 
@@ -42,7 +44,7 @@ const TRUE_LAT = TUNE.latency;
 
 function estRemaining(A) {
   let c = 0;
-  const hang = TUNE.drainBase(A.angle) * 0.6;
+  const hang = TUNE.drainBase(A.angle) * gradeParams(A.g).drain * 0.6;
   for (let i = A.moveIdx; i < A.P.moves.length; i++) {
     const mv = A.P.moves[i];
     c += A.moveCost(mv, 'good') + hang + (mv.feetCut ? 5 : 0);
@@ -130,7 +132,7 @@ export function runSession(prof, seed) {
 
 function pct(a, b) { return b ? ((100 * a) / b).toFixed(0) + '%' : '-'; }
 function quant(arr, q) { const s = [...arr].sort((a, b) => a - b); return s[Math.min(s.length - 1, Math.floor(q * s.length))]; }
-const gl = (g) => (g < 0 ? '—' : GRADES[g].v);
+const gl = (g) => (g < 0 ? '—' : GRADES[g].f);
 
 function report(name, prof) {
   const runs = [];
@@ -166,7 +168,7 @@ function report(name, prof) {
     const pf = P.falls.pump || 0, af = (P.falls.pump || 0) + (P.falls.early || 0) + (P.falls.late || 0);
     const close = P.eTop.filter((e) => e < 20).length;
     console.log(
-      `${GRADES[g].v.padEnd(5)}  ${pct(P.reached, N).padStart(6)}  ${pct(P.sent, P.att).padStart(8)}  ${pct(P.flash, P.reached).padStart(5)}  ${pct(pf, af).padStart(9)}  ${(P.eTop.length ? quant(P.eTop, 0.5).toFixed(0) : '-').padStart(9)}  ${pct(close, P.eTop.length).padStart(10)}  ${(P.rest / P.att).toFixed(1).padStart(7)}s`
+      `${GRADES[g].f.padEnd(5)}  ${pct(P.reached, N).padStart(6)}  ${pct(P.sent, P.att).padStart(8)}  ${pct(P.flash, P.reached).padStart(5)}  ${pct(pf, af).padStart(9)}  ${(P.eTop.length ? quant(P.eTop, 0.5).toFixed(0) : '-').padStart(9)}  ${pct(close, P.eTop.length).padStart(10)}  ${(P.rest / P.att).toFixed(1).padStart(7)}s`
     );
   }
 }

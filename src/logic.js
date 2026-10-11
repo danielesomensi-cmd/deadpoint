@@ -38,28 +38,42 @@ export const HOLD_TYPES = {
 export const GRADES = [
   { v: 'V0', f: '4' }, { v: 'V1', f: '5' }, { v: 'V2', f: '5+' }, { v: 'V3', f: '6a+' },
   { v: 'V4', f: '6b+' }, { v: 'V5', f: '6c+' }, { v: 'V6', f: '7a' }, { v: 'V7', f: '7a+' },
-  { v: 'V8', f: '7b+' }, { v: 'V9', f: '7c' }, { v: 'V10', f: '7c+' }, { v: 'V11', f: '8a' },
-  { v: 'V12', f: '8a+' }, { v: 'V13', f: '8b' },
+  { v: 'V8', f: '7b' }, { v: 'V8+', f: '7b+' }, { v: 'V9', f: '7c' }, { v: 'V10', f: '7c+' },
+  { v: 'V11', f: '8a' }, { v: 'V12', f: '8a+' }, { v: 'V13', f: '8b' },
 ];
 export const MAX_G = GRADES.length - 1;
+export const G_7B = 8; // first grade of the steep end of the ladder
+// stored grade indices (localStorage) were written with this ladder version; 1 had no 7b
+export const LADDER = 2;
+export const migrateGrade = (g, from) => (from < 2 && g >= G_7B ? g + 1 : g);
 export const gradeLabel = (g) => { const G = GRADES[clamp(g, 0, MAX_G)]; return G.f; };
 
+// Up to 7a+ the curve is gentle; from 7b (h = steps above 7a+) it gets much steeper: tighter
+// windows, faster flights, more drain, almost no jugs, more crimps/slopers, dynos and feet cuts.
 export function gradeParams(g) {
   const G = clamp(g, 0, MAX_G);
+  const Gs = Math.min(G, G_7B - 1), h = Math.max(0, G - (G_7B - 1));
   return {
-    angle: [20, 25, 30, 35, 40, 40, 45, 45, 50, 50, 55, 60, 65, 70][G],
-    win: Math.max(0.72, 1.22 - 0.038 * G),
-    speed: Math.max(0.7, 1 - 0.024 * G),
+    angle: [20, 25, 30, 35, 40, 40, 45, 45, 50, 55, 55, 60, 65, 70, 70][G],
+    // the first grades are forgiving (4: +0.2, 5: +0.12, 5+: +0.05); from 7b windows shrink fast:
+    // 7a+ 0.95, 7b 0.86, 8a 0.50, 8b 0.32
+    win: 1.22 - 0.038 * Gs - TUNE.steepWin * h + ([0.2, 0.12, 0.05][G] || 0),
+    speed: 1 - 0.024 * Gs - TUNE.steepSpeed * h, // flight time factor
+    drain: 1 + TUNE.steepDrain * h,              // hang/flight drain factor
+    cost: 1 + TUNE.steepCost * h,                // move cost factor
     gainMin: 0.2 + 0.008 * G,
     gainMax: 0.44 + 0.022 * G,
     weights: {
-      jug: Math.max(0.04, 0.62 - 0.075 * G),
-      edge: 0.32,
-      crimp: 0.04 + 0.045 * G,
-      sloper: 0.02 + 0.04 * G,
+      jug: h ? 0.012 : Math.max(0.04, 0.62 - 0.075 * G),
+      edge: h ? Math.max(0.1, 0.3 - 0.03 * h) : 0.32,
+      crimp: 0.04 + 0.045 * G + 0.05 * h,
+      sloper: 0.02 + 0.04 * G + 0.05 * h,
       pinch: 0.06 + 0.025 * G,
     },
-    dyno: G < 3 ? 0 : Math.min(0.45, 0.07 * (G - 2)),
+    dyno: G < 3 ? 0 : h ? Math.min(0.7, 0.4 + 0.045 * h) : Math.min(0.45, 0.07 * (G - 2)),
+    feetCutDyno: h ? Math.min(0.92, 0.75 + 0.03 * h) : 0.7, // chance a dyno cuts feet
+    feetCut: h ? 0.3 + 0.06 * h : 0.3,                      // chance a long static move cuts feet
+    chalkCatches: G >= 12 ? 1 : G >= 10 ? 2 : 3,            // chalk bonus wears off sooner up high
   };
 }
 
@@ -85,12 +99,13 @@ export const TUNE = {
   feetT: 0.55, feetWin: 1.1, feetMissCost: 14,
   matchDelay: 0.3, matchT: 0.7, matchWin: 1.35, matchMissCost: 15,
   flowCombo: 3, flowCost: 0.85,
+  steepWin: 0.09, steepSpeed: 0.025, steepDrain: 0.04, steepCost: -0.1, // per grade above 7a+ (see gradeParams)
   latency: 0.03,         // default input/display latency compensation (s)
   latencyMin: -0.01, latencyMax: 0.07, latencyRate: 0.05,
   grace: 0.12,           // ignore double-taps right after a launch/catch
-  // chalk bubble: every 2-3 hand moves, lives chalkLife s; tapped = the next chalkCatches catches get
-  // wider windows and the hang drains less
-  chalkLife: 2.0, chalkCatches: 3, chalkWin: 1.15, chalkDrain: 0.9,
+  // chalk bubble: every 2-3 hand moves, lives chalkLife s; tapped = the next few catches
+  // (gradeParams.chalkCatches) get wider windows and the hang drains less
+  chalkLife: 2.0, chalkWin: 1.15, chalkDrain: 0.9,
   // jump bubble (from 6a+): one per problem when two moves can merge into one dyno; its countdown
   // runs from jumpLife[0] s at 6a+ down to jumpLife[1] s at 8a. Tapped in time = next launch is a JUMP.
   jumpFrom: 3, jumpLife: [1.2, 0.6], jumpReach: 1.3, jumpSpan: 1.2, jumpPts: 2.5,
@@ -265,7 +280,7 @@ function tryGenerate(board, g, seed, relaxed) {
     const from = hand === 'L' ? L : R;
     const d = dist2(from, t);
     const dyno = !finishing && g >= 3 && (d > 0.95 || rnd() < P.dyno);
-    const feetCut = !finishing && P.angle >= 40 && (dyno ? rnd() < 0.7 : d > 0.8 && rnd() < 0.3);
+    const feetCut = !finishing && P.angle >= 40 && (dyno ? rnd() < P.feetCutDyno : d > 0.8 && rnd() < P.feetCut);
     moves.push({ hand, from: from.id, to: t.id, d, dyno, feetCut, finish: finishing });
     used.add(t.id);
     if (hand === 'L') L = t; else R = t;
@@ -394,8 +409,8 @@ export class Attempt {
   }
   jumpLife() {
     const g8a = GRADES.findIndex((G) => G.f === '8a');
-    const k = clamp((this.g - TUNE.jumpFrom) / Math.max(1, g8a - TUNE.jumpFrom), 0, 1);
-    return lerp(TUNE.jumpLife[0], TUNE.jumpLife[1], k);
+    const k = Math.max(0, (this.g - TUNE.jumpFrom) / Math.max(1, g8a - TUNE.jumpFrom));
+    return Math.max(0.45, lerp(TUNE.jumpLife[0], TUNE.jumpLife[1], k)); // keeps shrinking past 8a
   }
   // a bubble at a random spot (u, v in 0..1 of the free screen area) drifting along angle a
   spawnBubble(kind, life, extra = {}) {
@@ -410,7 +425,7 @@ export class Attempt {
     const b = this.bubbles[kind];
     if (!b || this.done || t > b.t0 + b.life) return false;
     delete this.bubbles[kind];
-    if (kind === 'chalk') { this.chalk = TUNE.chalkCatches; this.stats.chalk = (this.stats.chalk || 0) + 1; }
+    if (kind === 'chalk') { this.chalk = gradeParams(this.g).chalkCatches; this.stats.chalk = (this.stats.chalk || 0) + 1; }
     if (kind === 'jump') { this.jumpArmed = true; this.stats.jumpArm = (this.stats.jumpArm || 0) + 1; }
     this.emit('bubbleTap', { kind, b });
     return true;
@@ -438,17 +453,17 @@ export class Attempt {
     const gp = gradeParams(this.g);
     let T = clamp(0.5 + 0.5 * mv.d, 0.62, 1.1) * gp.speed;
     if (mv.dyno) T *= TUNE.dynoFlight;
-    return Math.max(0.5, T);
+    return Math.max(0.42, T);
   }
   moveCost(mv, q) {
     const tt = this.type(mv.to);
     let c = (TUNE.costBase + TUNE.costPerM * mv.d) * TUNE.costAngle(this.angle) * tt.cost * TUNE.timingMult[q];
     if (mv.dyno) c *= TUNE.dynoCost;
     if (this.combo >= TUNE.flowCombo) c *= TUNE.flowCost;
-    return c * (1 + TUNE.gradeCost * this.g);
+    return c * (1 + TUNE.gradeCost * this.g) * gradeParams(this.g).cost;
   }
   energyRate() {
-    const base = TUNE.drainBase(this.angle);
+    const base = TUNE.drainBase(this.angle) * gradeParams(this.g).drain;
     const dL = this.type(this.L).drain, dR = this.type(this.R).drain;
     switch (this.state) {
       case 'hang': return -base * (dL + dR) / 2 * (this.chalk > 0 ? TUNE.chalkDrain : 1);

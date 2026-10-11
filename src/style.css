@@ -158,7 +158,7 @@ button:focus-visible { outline: 2px solid var(--led-hand); outline-offset: 2px; 
 .how b { color: var(--chalk); }
 .how small { color: var(--chalk-dim); font-size: 14px; }
 .seg-label { font-size: 12px; font-weight: 700; letter-spacing: .14em; color: var(--chalk-dim); text-transform: uppercase; }
-.seg { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+.seg { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
 .seg button { padding: 9px 6px 8px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel-solid);
   font-family: var(--font-display); font-weight: 800; font-size: 19px; line-height: 1; }
 .seg button small { display: block; font-family: var(--font-ui); font-size: 12px; font-weight: 600; color: var(--chalk-dim); margin-top: 3px; letter-spacing: .04em; }

@@ -1,5 +1,5 @@
 // Sanity stats for the problem generator + reachability of feet with the body solver geometry.
-import { makeBoard, generateProblem, gradeParams, MAX_G } from '../src/logic.js';
+import { makeBoard, generateProblem, gradeParams, MAX_G, GRADES } from '../src/logic.js';
 const board = makeBoard(); const byId = Object.fromEntries(board.map(h => [h.id, h]));
 const v = (x, y, z) => ({ x, y, z }); const add = (a, b, k = 1) => v(a.x + b.x * k, a.y + b.y * k, a.z + b.z * k);
 const sub = (a, b) => v(a.x - b.x, a.y - b.y, a.z - b.z); const len = (a) => Math.hypot(a.x, a.y, a.z);
@@ -34,5 +34,5 @@ for (let g = 0; g <= MAX_G; g += 1) {
       for (const [side, F] of [[-1, FL], [1, FR]]) { stances++; const hip = v(Pp.x + side * 0.1, Pp.y, Pp.z); if (len(sub(F, hip)) > 0.88) unreach++; }
     }
   }
-  console.log(`V${g} ${P.angle}°  moves/problem ${(moves / N).toFixed(1)}  dyno ${(100 * dyno / moves).toFixed(0)}%  feetCut ${(100 * cut / moves).toFixed(0)}%  cross ${(100 * cross / moves).toFixed(0)}%  maxReach ${maxd.toFixed(2)}m  feetUnreachable ${(100 * unreach / stances).toFixed(0)}%  armsOverstretched ${(100 * armOver / (stances / 2)).toFixed(0)}%`);
+  console.log(`${GRADES[g].f.padEnd(4)} ${P.angle}°  moves/problem ${(moves / N).toFixed(1)}  dyno ${(100 * dyno / moves).toFixed(0)}%  feetCut ${(100 * cut / moves).toFixed(0)}%  cross ${(100 * cross / moves).toFixed(0)}%  maxReach ${maxd.toFixed(2)}m  feetUnreachable ${(100 * unreach / stances).toFixed(0)}%  armsOverstretched ${(100 * armOver / (stances / 2)).toFixed(0)}%`);
 }
