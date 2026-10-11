@@ -42,7 +42,7 @@ Use `QUICK=1`, `DPR=0.75` and `TIER=low` to iterate faster. `flow` and `smoke` s
 - The rules clock is `simT` (seconds, pauses with the game). Input timestamps are mapped onto it in
   `evTime`. Timing windows: `TUNE.win` × grade × hold type × pump; latency auto-calibrates.
 - Game rules change → run `npm run sim` and keep the bands in `test/sim.mjs` (`BANDS`) green.
-  Current medians: novice V3, casual V6, good V8, good-without-resting V6, expert V9.
+  Current medians: novice 6b+, casual 6c+, good 7a+, good-without-resting 7a, expert 7b, pro (near-perfect) 7c+.
 - Visual change → take screenshots (`test:shots`) and look at them before committing.
 - Test hooks exist only when the page is loaded with `window.__DP_TEST = true` (see `test/e2e.mjs`).
 
