@@ -14,11 +14,12 @@ const BANDS = { novice: [1, 5], casual: [4, 8], good: [6, 10], goodNoRest: [3, 8
 const MEDIANS = {};
 
 export const PROFILES = {
-  novice:     { sigma: 0.085, bias: 0.015, think: [0.8, 0.3],  rest: { simple: true, types: ['jug'], below: 35, until: 75 } },
-  casual:     { sigma: 0.062, bias: 0.008, think: [0.6, 0.2],  rest: { simple: true, types: ['jug', 'edge'], below: 45, until: 85 } },
-  good:       { sigma: 0.045, bias: 0.0,   think: [0.45, 0.15], rest: { smart: true } },
+  // rest: when to mash the rest button (only lit with a hand on a jug) and how fast (taps/s)
+  novice:     { sigma: 0.085, bias: 0.015, think: [0.8, 0.3],  rest: { below: 35, until: 75, tps: 5 } },
+  casual:     { sigma: 0.062, bias: 0.008, think: [0.6, 0.2],  rest: { below: 45, until: 85, tps: 6 } },
+  good:       { sigma: 0.045, bias: 0.0,   think: [0.45, 0.15], rest: { smart: true, tps: 7 } },
   goodNoRest: { sigma: 0.045, bias: 0.0,   think: [0.45, 0.15], rest: null },
-  expert:     { sigma: 0.030, bias: 0.0,   think: [0.35, 0.1],  rest: { smart: true } },
+  expert:     { sigma: 0.030, bias: 0.0,   think: [0.35, 0.1],  rest: { smart: true, tps: 8 } },
 };
 
 function gaussFactory(rnd) {
@@ -47,18 +48,12 @@ function estRemaining(A) {
 }
 
 function restPlan(A, prof) {
-  if (!prof.rest) return null;
-  const hand = A.bestHand();
-  const holdId = hand === 'L' ? A.L : A.R;
-  const rate = A.restRateFor(holdId);
-  if (rate <= 1) return null;
+  if (!prof.rest || !A.canRest) return null;
   if (prof.rest.smart) {
     const need = estRemaining(A);
     if (A.energy < Math.min(A.maxEnergy - 4, need * 1.15)) return Math.min(A.maxEnergy - 1, need * 1.3 + 6);
     return null;
   }
-  const type = A.hold(holdId).type;
-  if (!prof.rest.types.includes(type)) return null;
   if (A.energy < prof.rest.below) return Math.min(A.maxEnergy - 1, prof.rest.until);
   return null;
 }
@@ -70,7 +65,7 @@ function decide(A, prof, gauss, t) {
   if (st === 'match') return { kind: 'tap', at: A.match.dp + TRUE_LAT + prof.bias + gauss() * prof.sigma };
   if (st === 'hang') {
     const target = restPlan(A, prof);
-    if (target != null) return { kind: 'rest', at: t + 0.12, target };
+    if (target != null) return { kind: 'rest', at: t + 0.15, target };
   }
   return { kind: 'tap', at: t + Math.max(0.15, prof.think[0] + gauss() * prof.think[1]) };
 }
@@ -93,17 +88,15 @@ export function runSession(prof, seed) {
         if (A.done) break;
         if (A.state !== plan.state) { plan = null; continue; }
         t = at;
-        A.press(t);
-        if (plan.kind === 'tap') { t += 0.07; A.release(t); plan = null; }
-        else plan.phase = 'holding';
+        if (plan.kind === 'tap') { A.press(t); plan = null; } else { A.shake(t); plan.phase = 'mashing'; plan.n = 0; }
       } else {
-        t += DT;
-        A.update(t);
+        // mashing the rest button: one tap every 1/tps s (with some jitter) until the target
+        const next = t + Math.max(0.05, (1 + 0.15 * gauss()) / prof.rest.tps);
+        while (t + DT < next && !A.done) { t += DT; A.update(t); }
         if (A.done) break;
-        const stop = A.state === 'rest'
-          ? (A.energy >= plan.target || A.energyRate() <= 0.5 || A.stats.rest > 12)
-          : A.state !== 'hang';
-        if (stop) { A.release(t); plan = null; }
+        t = next;
+        if (A.energy >= plan.target || A.energy >= A.maxEnergy - 0.5 || ++plan.n > 90 || !A.canRest) { plan = null; continue; }
+        A.shake(t);
       }
     }
     rec.attempts.push({

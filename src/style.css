@@ -17,6 +17,9 @@
   --font-display: "Big Shoulders Display", "Arial Narrow", "Roboto Condensed", system-ui, sans-serif;
   --font-ui: "Barlow Semi Condensed", "Segoe UI", system-ui, sans-serif;
   --gut: 16px;
+  --btn-main: 104px;  /* main button diameter */
+  --ctl-bottom: calc(env(safe-area-inset-bottom, 0px) + 18px);
+  --ctl-clear: calc(var(--ctl-bottom) + var(--btn-main) + 10px); /* bottom UI sits above the buttons */
 }
 *, *::before, *::after { box-sizing: border-box; }
 [hidden] { display: none !important; }
@@ -30,7 +33,7 @@ body {
 }
 #scene, #fx { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
 #fx { pointer-events: none; }
-#input { position: fixed; inset: 0; touch-action: none; z-index: 2; }
+#scene { touch-action: none; }
 #vignette { position: fixed; inset: 0; pointer-events: none; z-index: 1; opacity: 0;
   background: radial-gradient(ellipse at center, transparent 45%, rgba(255, 60, 30, 0.55) 100%); transition: opacity .25s; }
 #flash { position: fixed; inset: 0; pointer-events: none; z-index: 1; background: #fff; opacity: 0; }
@@ -80,8 +83,8 @@ button:focus-visible { outline: 2px solid var(--led-hand); outline-offset: 2px; 
 @keyframes costUp { from { transform: translateY(0); opacity: 1; } to { transform: translateY(-22px); opacity: 0; } }
 
 #hint { position: fixed; left: 0; right: 0; bottom: 0; z-index: 3; pointer-events: none;
-  padding: 40px var(--gut) calc(env(safe-area-inset-bottom, 0px) + 16px); display: grid; justify-items: center; gap: 8px;
-  background: linear-gradient(to top, rgba(11,13,18,.75), rgba(11,13,18,0)); }
+  padding: 40px var(--gut) var(--ctl-clear); display: grid; justify-items: center; gap: 8px;
+  background: linear-gradient(to top, rgba(11,13,18,.8), rgba(11,13,18,.5) 45%, rgba(11,13,18,0)); }
 #hintText { font-size: 16px; font-weight: 600; text-align: center; max-width: 30ch; text-wrap: balance;
   text-shadow: 0 1px 3px rgba(0,0,0,.8); min-height: 1.3em; transition: opacity .2s; }
 #nextChip { font-size: 13px; font-weight: 700; letter-spacing: .06em; padding: 5px 10px 4px; border-radius: 6px;
@@ -89,6 +92,31 @@ button:focus-visible { outline: 2px solid var(--led-hand); outline-offset: 2px; 
 #nextChip b { color: var(--chalk); }
 #nextChip .tag { color: var(--led-foot); margin-left: 6px; }
 #nextChip .warn { color: var(--pump); margin-left: 6px; }
+
+/* ---------- Controls: one big button (bottom centre, thumb reach) ---------- */
+#controls { position: fixed; left: 0; right: 0; bottom: 0; height: 0; z-index: 4; pointer-events: none; }
+#controls button { pointer-events: auto; position: absolute; touch-action: none; padding: 0; border-radius: 50%;
+  -webkit-tap-highlight-color: transparent; display: grid; place-items: center; }
+#btnMain { left: 50%; bottom: var(--ctl-bottom); width: var(--btn-main); height: var(--btn-main); margin-left: calc(var(--btn-main) / -2);
+  border: 3px solid rgba(255,255,255,.92); background: radial-gradient(circle at 50% 38%, rgba(255,255,255,.3), rgba(255,255,255,.1) 62%, rgba(11,13,18,.5));
+  box-shadow: 0 0 0 4px rgba(11,13,18,.5), 0 6px 18px rgba(0,0,0,.45); }
+#btnMain svg { width: 46%; height: 46%; fill: none; stroke: #fff; stroke-width: 3; stroke-linecap: round; stroke-linejoin: round;
+  filter: drop-shadow(0 1px 2px rgba(0,0,0,.7)); }
+#btnMain.hit { animation: btnHit .16s ease-out; }
+/* rest button: bottom right, dark until a hand is on a jug */
+#btnRest { right: var(--gut); bottom: calc(var(--ctl-bottom) + 6px); width: 72px; height: 72px; gap: 0; align-content: center;
+  border: 2px solid rgba(239,233,220,.22); background: rgba(13,16,23,.7); color: rgba(239,233,220,.3);
+  transition: border-color .2s, color .2s, background-color .2s, opacity .2s; opacity: .55; }
+#btnRest svg { width: 30px; height: 30px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+#btnRest span { font-size: 11px; font-weight: 700; letter-spacing: .1em; margin-top: 1px; }
+#btnRest.lit { opacity: 1; color: #fff; border-color: rgba(255,255,255,.9); background: rgba(255,255,255,.16);
+  box-shadow: 0 0 0 3px rgba(11,13,18,.5), 0 4px 14px rgba(0,0,0,.4); }
+#btnRest.hit { animation: btnHit .12s ease-out; }
+@keyframes btnHit { 40% { transform: scale(.9); background-color: rgba(255,255,255,.35); } }
+
+#tip { position: fixed; z-index: 6; pointer-events: none; padding: 9px 12px 8px; border-radius: 10px; background: #efe9dc; color: #12161f;
+  font-size: 15px; font-weight: 700; line-height: 1.25; text-align: center; box-shadow: 0 6px 18px rgba(0,0,0,.5); }
+#tip.show { animation: cardIn .3s cubic-bezier(.2,.9,.3,1.2); }
 
 /* ---------- Screens ---------- */
 .screen { position: fixed; inset: 0; z-index: 5; display: flex; flex-direction: column; justify-content: flex-end;
@@ -124,7 +152,7 @@ button:focus-visible { outline: 2px solid var(--led-hand); outline-offset: 2px; 
 .meta b { color: var(--chalk); font-variant-numeric: tabular-nums; }
 
 #card { position: fixed; left: 0; right: 0; bottom: 0; z-index: 4; pointer-events: none; display: grid; justify-items: center;
-  padding: 0 var(--gut) calc(env(safe-area-inset-bottom, 0px) + 22px); }
+  padding: 0 var(--gut) var(--ctl-clear); }
 #card .tap { font-size: 12px; font-weight: 700; letter-spacing: .14em; color: var(--chalk-dim); margin-top: 8px; }
 .card-in { text-align: center; padding: 14px 18px 12px; border-radius: 12px; background: var(--panel); border: 1px solid var(--line);
   min-width: min(300px, 100%); animation: cardIn .35s cubic-bezier(.2,.9,.3,1.2); }
@@ -154,6 +182,6 @@ button:focus-visible { outline: 2px solid var(--led-hand); outline-offset: 2px; 
   background: var(--led-finish); color: #12161f; }
 #pause { background: rgba(11,13,18,.88); justify-content: center; }
 #fatal { position: fixed; inset: 0; z-index: 9; display: grid; place-items: center; padding: var(--gut); text-align: center; background: var(--night); }
-@media (prefers-reduced-motion: reduce) { .card-in, #toast.show { animation: none; } }
+@media (prefers-reduced-motion: reduce) { .card-in, #toast.show, #btnMain.hit, #btnRest.hit { animation: none; } }
 
 #fade { position: fixed; inset: 0; z-index: 4; pointer-events: none; background: var(--night); opacity: 0; }

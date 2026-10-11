@@ -27,19 +27,26 @@ const URL = `http://127.0.0.1:${server.address().port}/` + (process.env.QS ? `?$
 // In-page bot: schedules presses against the game's own clock and dispatches real pointer events.
 const BOT = String.raw`(() => {
   const B = window.__bot = { on: false, sigma: 0.015, bias: 0, busy: false, pend: null, taps: 0, rests: 0, miss: false, rest: true };
-  const input = document.getElementById('input');
-  const fire = (type) => input.dispatchEvent(new PointerEvent(type, { bubbles: true, cancelable: true, pointerId: 7, pointerType: 'touch', isPrimary: true }));
-  B.fire = fire;
+  const main = document.getElementById('btnMain'), restBtn = document.getElementById('btnRest');
+  const fireOn = (el) => el.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true, pointerId: 7, pointerType: 'touch', isPrimary: true }));
+  B.fire = () => fireOn(main);
+  B.fireOn = fireOn;
   const gauss = () => { let u = 0, v = 0; while (!u) u = Math.random(); while (!v) v = Math.random(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v); };
-  B.schedule = (at, hold = 0.05, until = null) => { B.busy = true; B.pend = { at, hold, until, down: null }; };
-  B.stop = () => { if (B.pend && B.pend.down !== null) fire('pointerup'); B.pend = null; B.busy = false; B.on = false; };
+  B.schedule = (at) => { B.busy = true; B.pend = { at }; };
+  // mash the rest button (~8 taps/s) until the target energy, then let the main loop go on
+  B.mash = (target) => { B.busy = true; B.pend = { mash: true, at: 0, target }; };
+  B.stop = () => { B.pend = null; B.busy = false; B.on = false; };
   function step() {
     requestAnimationFrame(step);
     const D = window.__DP; if (!D || D.paused) return;
+    if (B.pend && B.pend.mash) {
+      const A = D.attempt, p = B.pend;
+      if (!A || A.done || !A.canRest || A.energy >= p.target) { B.pend = null; B.busy = false; return; }
+      if (D.simT >= p.at) { fireOn(restBtn); B.shakes = (B.shakes || 0) + 1; p.at = D.simT + 0.12; }
+      return;
+    }
     if (B.pend) {
-      const p = B.pend;
-      if (p.down === null) { if (D.simT >= p.at - 1 / 120) { fire('pointerdown'); p.down = D.simT; } }
-      else if (p.until ? p.until() : D.simT >= p.down + p.hold) { fire('pointerup'); B.pend = null; B.busy = false; B.taps++; }
+      if (D.simT >= B.pend.at - 1 / 120) { B.fire(); B.pend = null; B.busy = false; B.taps++; }
       return;
     }
     if (!B.on || B.busy) return;
@@ -47,12 +54,7 @@ const BOT = String.raw`(() => {
     const S = D.session;
     if (A.state === 'ready') return B.schedule(D.simT + 0.3);
     if (A.state === 'hang') {
-      const hid = A.bestHand() === 'L' ? A.L : A.R;
-      if (B.rest && A.energy < 55 && A.restRateFor(hid) > 3) {
-        B.rests++;
-        const target = Math.min(A.maxEnergy - 2, 88);
-        return B.schedule(D.simT + 0.05, 0, () => A.done || A.energy >= target || (A.state !== 'rest' && A.state !== 'hang'));
-      }
+      if (B.rest && A.energy < 55 && A.canRest) { B.rests++; return B.mash(Math.min(A.maxEnergy - 2, 88)); }
       return B.schedule(D.simT + 0.25);
     }
     const ev = A.state === 'flight' ? A.flight : A.state === 'feet' ? A.feet : A.state === 'match' ? A.match : null;
@@ -109,7 +111,7 @@ try {
   if (RUN === 'smoke') {
     await page.click('#btnStart'); log('clicked start');
     await wait('__DP.mode === "intro"', { timeout: 20000 }); log('intro');
-    await ev('__bot.fire("pointerdown"); __bot.fire("pointerup")');
+    await ev('__bot.fire()');
     await wait('__DP.mode === "climb" && !__DP.busy', { timeout: 20000 }); log('climb ready');
     await ev('__bot.on = true; __bot.sigma = 0.01');
     for (let i = 0; i < 60 && !(await ev('__DP.session.log.length >= 1 || __DP.mode === "over"')); i++) {
@@ -134,6 +136,7 @@ try {
     report.log = await ev('__DP.session.log.map(l => [l.g, l.attempts])');
     report.taps = await ev('__bot.taps');
     report.rests = await ev('__bot.rests');
+    report.shakes = await ev('__bot.shakes || 0');
     // the body is the timing cue: the pelvis must stop rising on the deadpoint (±15 ms)
     const apexLog = await ev('__DP.apexLog.slice()');
     const sorted = apexLog.slice().sort((x, y) => x - y);
@@ -157,7 +160,7 @@ try {
     await page.click('#btnStart');
     await frames(50);
     await shot('02_intro');
-    await ev('__bot.fire("pointerdown"); __bot.fire("pointerup")');
+    await ev('__bot.fire()');
     await wait('__DP.mode === "climb" && !__DP.busy');
     await frames(30);
     await shot('03_ready');
@@ -172,9 +175,8 @@ try {
     await freeze(true); await shot('05_catch'); await freeze(false);
     await ev('__bot.stop()');
     await wait('__DP.attempt.state === "hang" || __DP.attempt.done');
-    if (await ev('__DP.attempt.state') === 'hang') {
-      await ev('__DP.attempt.energy = 48');
-      await ev('__bot.schedule(__DP.simT, 1.3)');
+    if (await ev('__DP.attempt.state === "hang" && __DP.attempt.canRest')) {
+      await ev('__DP.attempt.energy = 48; __bot.mash(95)');
       await wait('__DP.attempt.state === "rest"');
       await frames(20);
       await freeze(true); await shot('06_rest'); await freeze(false);
@@ -194,7 +196,7 @@ try {
     await shot('10_next_intro');
     if (process.env.QUICK) { report.visual = 'quick-ok'; }
     else {
-      await ev('__bot.fire("pointerdown"); __bot.fire("pointerup")');
+      await ev('__bot.fire()');
       await wait('__DP.mode === "climb" && !__DP.busy');
       await ev('__DP.session.attemptNo = 3; __bot.miss = true; __bot.on = true');
       await wait('__DP.mode === "fallen"');

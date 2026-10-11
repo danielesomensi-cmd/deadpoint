@@ -18,7 +18,6 @@
 <div id="vignette"></div>
 <div id="flash"></div>
 <div id="fade"></div>
-<div id="input" aria-hidden="true"></div>
 
 <header id="hud" hidden>
   <div class="hud-row">
@@ -35,8 +34,13 @@
 </header>
 <div id="costLayer"></div>
 <div id="card" hidden></div>
+<div id="tip" hidden></div>
 <div id="toast" hidden><div class="big" id="toastBig"></div><div class="small" id="toastSmall"></div></div>
 <footer id="hint" hidden><span id="hintText"></span><span id="nextChip"></span></footer>
+<div id="controls" hidden>
+  <button id="btnMain" tabindex="-1" aria-label="Move" data-i18n-aria="ariaMain"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 15.5 12 8.5l7 7"/></svg></button>
+  <button id="btnRest" tabindex="-1" aria-disabled="true" aria-label="Shake out" data-i18n-aria="ariaRest"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 4v9M12 3v10M16 5v8M8 13c0 4 1.5 7 5 7s5-3 5-6.5V9"/><path d="M3 8.5c.8-.6 1.6-.6 2.4 0M3 12c.8-.6 1.6-.6 2.4 0" class="w"/></svg><span data-i18n="restLabel">SHAKE</span></button>
+</div>
 
 <section class="screen" id="title">
   <div class="screen-inner">
@@ -50,9 +54,9 @@
       <span><i class="dot" style="color:var(--led-foot);background:var(--led-foot)"></i><span data-i18n="legFoot">Solo piedi</span></span>
     </div>
     <ol class="how">
-      <li><span data-i18n="how1"><b>Tocca</b> per lanciarti verso la presa illuminata.</span></li>
+      <li><span data-i18n="how1"><b>Tocca il pulsante</b> per lanciarti verso la presa illuminata.</span></li>
       <li><span data-i18n="how2"><b>Guarda la scalatrice</b>: carica due volte, spinge, e <b>tocca quando si ferma in alto</b> con la mano aperta sulla presa. <small>Tic, tic, TAC: si tocca sul TAC. Perfetto = meno fatica.</small></span></li>
-      <li><span data-i18n="how3"><b>Tieni premuto</b> sulle prese buone per scuotere le braccia. <small>Sulle tacchette non si recupera.</small></span></li>
+      <li><span data-i18n="how3"><b>Su una maniglia</b> martella il tasto a destra per scuotere le braccia. <small>Più veloce = più recupero. Solo sulle maniglie.</small></span></li>
     </ol>
     <div class="seg-label" data-i18n="startFrom">Parti da</div>
     <div class="seg" id="startSeg">

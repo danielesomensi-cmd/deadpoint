@@ -284,7 +284,7 @@ export function startGame() {
     session = new Session({ board: BOARD_HOLDS, startGrade: g });
     startG = g; store.set('startG', g);
     $('title').hidden = true; $('over').hidden = true;
-    $('hud').hidden = false; $('hint').hidden = false;
+    $('hud').hidden = false; $('hint').hidden = false; $('controls').hidden = false;
     try { if (navigator.wakeLock) navigator.wakeLock.request('screen').catch(() => {}); } catch (e) { /* not available */ }
     beginProblem(true);
   }
@@ -358,7 +358,7 @@ export function startGame() {
     sfx.setLevel(3);
     sfx.setPump(0);
     sfx.over();
-    $('hud').hidden = true; $('hint').hidden = true; hideCard();
+    $('hud').hidden = true; $('hint').hidden = true; $('controls').hidden = true; hideCard();
     const best = session.bestG;
     const prevBest = store.get('bestScore', 0), prevG = store.get('bestG', -1);
     const newRecord = session.score > prevBest;
@@ -379,11 +379,11 @@ export function startGame() {
   }
 
   function goTitle() {
-    paused = false; $('pause').hidden = true;
+    paused = false; $('pause').hidden = true; tipEl.hidden = true;
     mode = 'title';
     clearTimers(); fade = null;
     sfx.stopRest(); sfx.setPump(0); sfx.setLevel(0);
-    $('hud').hidden = true; $('hint').hidden = true; $('over').hidden = true; hideCard();
+    $('hud').hidden = true; $('hint').hidden = true; $('controls').hidden = true; $('over').hidden = true; hideCard();
     $('title').hidden = false;
     showDemo();
   }
@@ -817,7 +817,7 @@ export function startGame() {
     tries: $('tries').children, hint: $('hintText'), next: $('nextChip'), vignette: $('vignette'),
   };
   const fmt = (n) => Math.round(n).toLocaleString(fmtLocale);
-  let lastHint = null, lastNext = null, lastScore = -1, lastCombo = -1;
+  let lastHint = null, lastNext = null, lastScore = -1, lastCombo = -1, restLit = null;
   let frameDt = 0.016;
   function updateHud(force) {
     if (!session) return;
@@ -861,6 +861,10 @@ export function startGame() {
       const crux = A.moveIdx >= mvs.length * 0.75 || !!(nm && (nm.dyno || nm.d >= A.P.maxD));
       sfx.setIntensity({ progress: A.moveIdx / mvs.length, crux, combo: A.combo, pump });
     }
+    const canRest = !!(A && mode === 'climb' && A.canRest);
+    if (canRest !== restLit) { restLit = canRest; restBtn.classList.toggle('lit', canRest); restBtn.setAttribute('aria-disabled', String(!canRest)); }
+    if (canRest && A.energy < A.maxEnergy - 15) tip('rest', restBtn, t('tipRest'));
+    if (A && mode === 'climb' && A.state === 'ready' && !fading()) tip('main', mainBtn, t('tipMain'));
     const hint = hintFor(A);
     if (hint !== lastHint) { hud.hint.textContent = hint; lastHint = hint; }
     const nx = nextChipFor(A);
@@ -869,15 +873,14 @@ export function startGame() {
   function hintFor(A) {
     if (!A || mode !== 'climb') return '';
     const learning = session.log.length < 2 && session.g <= 2;
-    const restRate = A.restRateFor(A.bestHand() === 'L' ? A.L : A.R);
     switch (A.state) {
       case 'ready': return session.log.length === 0 && session.attemptNo === 1 ? t('hintFirst') : t('hintStart');
       case 'flight': return '';
       case 'hang':
-        if (A.energy < A.maxEnergy - 22 && restRate > 3) return t('hintRest');
-        if (A.energy < 35 && restRate <= 0.5) return t('hintNoRest');
+        if (A.energy < A.maxEnergy - 22 && A.canRest) return t('hintRest');
+        if (A.energy < 35 && !A.canRest) return t('hintNoRest');
         return learning ? t('hintNext') : '';
-      case 'rest': return restRate > 0 ? t('hintShake') : t('hintDrain');
+      case 'rest': return t('hintShake');
       case 'feet': return t('hintFeet');
       case 'match': return t('hintMatch');
       default: return '';
@@ -892,6 +895,25 @@ export function startGame() {
     if (mv.dyno) s += `<span class="tag">${t('dyno')}</span>`;
     if (mv.feetCut) s += `<span class="warn">${t('feetCut')}</span>`;
     return s;
+  }
+
+  // ===================== One-time tips (new controls and bubbles) =====================
+  // a small callout next to the thing it explains, shown once ever per key (localStorage deadpoint:tips)
+  const tipEl = $('tip'), tipsSeen = store.get('tips', {});
+  let tipUntil = 0;
+  function tip(key, anchor, text) {
+    if (tipsSeen[key] || (TEST && !window.__DP_TIPS)) return;
+    tipsSeen[key] = 1; store.set('tips', tipsSeen);
+    tipEl.textContent = text;
+    tipEl.hidden = false;
+    const r = anchor.getBoundingClientRect ? anchor.getBoundingClientRect() : anchor;
+    const tw = Math.min(240, W - 32);
+    tipEl.style.width = tw + 'px';
+    tipEl.style.left = Math.round(clamp(r.left + r.width / 2 - tw / 2, 16, W - 16 - tw)) + 'px';
+    tipEl.style.top = 'auto';
+    tipEl.style.bottom = Math.round(H - r.top + 10) + 'px';
+    tipEl.classList.remove('show'); void tipEl.offsetWidth; tipEl.classList.add('show');
+    tipUntil = simT + 3.2;
   }
 
   // ===================== Cards & toasts =====================
@@ -915,7 +937,7 @@ export function startGame() {
   }
 
   // ===================== Input =====================
-  const inputEl = $('input');
+  const mainBtn = $('btnMain');
   function evTime(e) {
     if (LOCK) return simT;
     const now = performance.now();
@@ -931,18 +953,27 @@ export function startGame() {
       attempt.press(t);
     } else if (mode === 'topped' && simT - topT0 > 0.8) { toastEl.hidden = true; endAttempt(); }
   }
-  function onRelease(t) { if (mode === 'climb' && attempt) attempt.release(t); }
-  inputEl.addEventListener('pointerdown', (e) => { e.preventDefault(); onPress(evTime(e)); }, { passive: false });
-  window.addEventListener('pointerup', (e) => onRelease(evTime(e)));
-  window.addEventListener('pointercancel', (e) => onRelease(evTime(e)));
-  inputEl.addEventListener('contextmenu', (e) => e.preventDefault());
+  // one big button does one thing: launch / catch / feet / match (and starts the problem, skips the top)
+  mainBtn.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    mainBtn.classList.remove('hit'); void mainBtn.offsetWidth; mainBtn.classList.add('hit');
+    onPress(evTime(e));
+  }, { passive: false });
+  mainBtn.addEventListener('contextmenu', (e) => e.preventDefault());
+  // rest button: lit only while hanging with a hand on a jug; mash it to shake out
+  const restBtn = $('btnRest');
+  restBtn.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    if (paused || mode !== 'climb' || !attempt || fading() || climber.entering) return;
+    if (attempt.shake(evTime(e)) > 0 || attempt.state === 'rest') { restBtn.classList.remove('hit'); void restBtn.offsetWidth; restBtn.classList.add('hit'); }
+  }, { passive: false });
+  restBtn.addEventListener('contextmenu', (e) => e.preventDefault());
   const KEYS = new Set(['Space', 'Enter', 'ArrowUp', 'KeyJ']);
   window.addEventListener('keydown', (e) => {
     if (e.code === 'Escape' || e.code === 'KeyP') { if (mode === 'climb' || mode === 'intro') togglePause(!paused); return; }
     if (!KEYS.has(e.code) || e.repeat) return;
     if (mode === 'climb' || mode === 'intro' || mode === 'topped') { e.preventDefault(); onPress(evTime(e)); }
   });
-  window.addEventListener('keyup', (e) => { if (KEYS.has(e.code)) onRelease(evTime(e)); });
   document.addEventListener('visibilitychange', () => { if (document.hidden && (mode === 'climb' || mode === 'intro')) togglePause(true); });
 
   function togglePause(on) {
@@ -950,7 +981,6 @@ export function startGame() {
     if (on && session) $('pauseEyebrow').textContent = `${problemName(session.problem)} · ${gradeLabel(session.problem.grade)} · ${session.problem.angle}°`;
     $('pause').hidden = !on;
     $('btnMute').textContent = sfx.muted ? t('soundOff') : t('soundOn');
-    if (on && attempt && attempt.pressing) attempt.release(simT);
     sfx.pause(on);
   }
   function setSeg(id, g) {
@@ -1043,6 +1073,7 @@ export function startGame() {
       }
       if (mode === 'fallen' && simT >= fallEndAt) { fallEndAt = Infinity; endAttempt(); }
       if (!toastEl.hidden && simT >= toastUntil) toastEl.hidden = true;
+      if (!tipEl.hidden && simT >= tipUntil) tipEl.hidden = true;
       updateFade();
       if (climber.mode === 'climb' && (mode === 'climb' || mode === 'title' || mode === 'topped')) driveClimber();
       if (climber.mode === 'stand') {

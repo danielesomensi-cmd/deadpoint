@@ -66,9 +66,11 @@ export function gradeParams(g) {
 // ---------- Tuning (balanced with test/sim.mjs) ----------
 export const TUNE = {
   drainBase: (angle) => 0.5 + 0.05 * angle, // energy/s on a hold with drain 1
-  restRate: 15,          // energy/s recovered on a hold with rest 1
-  restDrain: 1.25,       // one-hand hang while shaking
-  restHold: 0.22,        // s of press before it counts as "shake out"
+  restDrain: 1.25,       // one-hand hang while shaking (the jug hand keeps draining)
+  // rest button: mash it while a hand is on a jug. Each tap shakes out a little energy. Tapping
+  // faster than one per shakeGap s gives no more per second; slower taps give less per tap
+  // (x shakeGap / interval), so the rate falls with the square of the interval.
+  shakeTap: 2.3, shakeGap: 0.16, shakeHold: 0.45, // s without taps before the shake ends
   flightDrain: 0.65,
   feetDrain: 1.8,
   costBase: 2.2,
@@ -344,13 +346,11 @@ export class Attempt {
     this.combo = session.combo;
     this.score = 0;
     this.stats = { perfect: 0, good: 0, ok: 0, miss: 0, rest: 0, feetMiss: 0, matchMiss: 0 };
-    this.pressing = false;
-    this.pressT = 0;
-    this.pressState = null;
     this.flight = null;
     this.feet = null;
     this.match = null;
     this.restHand = null;
+    this.lastShake = -1;
     this.events = [];
     this.result = null;
     this.fallReason = null;
@@ -381,10 +381,6 @@ export class Attempt {
     if (this.combo >= TUNE.flowCombo) c *= TUNE.flowCost;
     return c * (1 + TUNE.gradeCost * this.g);
   }
-  bestHand() {
-    const rl = this.type(this.L).rest, rr = this.type(this.R).rest;
-    return rr > rl ? 'R' : 'L';
-  }
   energyRate() {
     const base = TUNE.drainBase(this.angle);
     const dL = this.type(this.L).drain, dR = this.type(this.R).drain;
@@ -393,17 +389,30 @@ export class Attempt {
       case 'flight': return -base * (this.flight.mv.hand === 'L' ? dR : dL) * TUNE.flightDrain;
       case 'feet': return -base * (dL + dR) / 2 * TUNE.feetDrain;
       case 'match': return -base * (dL + dR) / 2;
-      case 'rest': {
-        const T = this.type(this.restHand === 'L' ? this.L : this.R);
-        return TUNE.restRate * T.rest - base * T.drain * TUNE.restDrain;
-      }
+      case 'rest': return -base * this.type(this.restHand === 'L' ? this.L : this.R).drain * TUNE.restDrain;
       default: return 0;
     }
   }
-  restRateFor(handId) {
-    const base = TUNE.drainBase(this.angle);
-    const T = this.type(handId);
-    return TUNE.restRate * T.rest - base * T.drain * TUNE.restDrain;
+  // the rest button is lit only while hanging with a hand on a jug
+  restHandFor() {
+    if (this.state !== 'hang' && this.state !== 'rest') return null;
+    const jl = this.hold(this.L).type === 'jug', jr = this.hold(this.R).type === 'jug';
+    return jr && (!jl || this.L === this.R) ? 'R' : jl ? 'L' : null;
+  }
+  get canRest() { return this.restHandFor() !== null; }
+  // one tap of the rest button: the free hand shakes out
+  shake(t) {
+    this.update(t);
+    const hand = this.restHandFor();
+    if (this.done || !hand) return 0;
+    if (this.state !== 'rest') { this.state = 'rest'; this.restHand = hand; this.lastShake = -1; this.emit('restStart', { hand }); }
+    const gap = this.lastShake < 0 ? TUNE.shakeGap : Math.max(t - this.lastShake, 0.01);
+    const k = gap <= TUNE.shakeGap ? gap / TUNE.shakeGap : TUNE.shakeGap / gap;
+    this.lastShake = t;
+    const gain = Math.max(0, Math.min(TUNE.shakeTap * k, this.maxEnergy - this.energy));
+    this.energy += gain;
+    this.emit('shake', { gain });
+    return gain;
   }
 
   update(t) {
@@ -413,17 +422,10 @@ export class Attempt {
     if (dt > 0.25) dt = 0.25;
     this.t = t;
     if (this.done) return;
-    if (this.state === 'hang' && this.pressing && this.pressState === 'hang' && t - this.pressT >= TUNE.restHold) {
-      this.state = 'rest';
-      this.restHand = this.bestHand();
-      this.emit('restStart', { hand: this.restHand });
-    }
+    if (this.state === 'rest' && t - this.lastShake > TUNE.shakeHold) { this.state = 'hang'; this.emit('restEnd'); }
     if (this.state !== 'ready') {
       this.energy += this.energyRate() * dt;
-      if (this.state === 'rest') {
-        this.stats.rest += dt;
-        if (this.energy > this.maxEnergy) this.energy = this.maxEnergy;
-      }
+      if (this.state === 'rest') this.stats.rest += dt;
       if (this.energy <= 0) { this.energy = 0; this.fall('pump'); return; }
     }
     const lat = this.S.latency;
@@ -432,30 +434,20 @@ export class Attempt {
     else if (this.state === 'match' && t > this.match.dp + lat + this.match.w.ok) this.missMatch(t - this.match.dp - lat);
   }
 
+  // the main button: one tap = launch from the start or a hang, catch, feet back on, match
   press(t) {
     this.update(t);
-    if (this.pressing || this.done) return;
-    this.pressing = true;
-    this.pressT = t;
-    this.pressState = this.state;
-    if (this.state === 'flight') this.tryCatch(t);
+    if (this.done) return;
+    if (this.state === 'ready' || this.state === 'hang' || this.state === 'rest') this.launch(t);
+    else if (this.state === 'flight') this.tryCatch(t);
     else if (this.state === 'feet') this.tryFeet(t);
     else if (this.state === 'match') this.tryMatch(t);
-  }
-
-  release(t) {
-    this.update(t);
-    if (!this.pressing) return;
-    this.pressing = false;
-    if (this.done) return;
-    if (this.state === 'rest') { this.state = 'hang'; this.emit('restEnd'); return; }
-    if (this.pressState === 'ready' && this.state === 'ready') { this.launch(t); return; }
-    if (this.pressState === 'hang' && this.state === 'hang' && t - this.pressT < TUNE.restHold) this.launch(t);
   }
 
   launch(t) {
     const mv = this.nextMove();
     if (!mv) return;
+    if (this.state === 'rest') this.emit('restEnd');
     const w = this.windows(this.hold(mv.to).type, mv.dyno ? TUNE.dynoWin : 1);
     const T = this.flightTime(mv);
     this.flight = { mv, t0: t, T, dp: t + T, w };
