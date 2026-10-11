@@ -327,6 +327,7 @@ export function startGame() {
     // stand on the mat, clear of the board at both the old and the new angle
     const zSafe = safeStandZ(Math.max(angleFrom, angleTo));
     const sx = clamp((HOLD_BY_ID[pr.start.L].x + HOLD_BY_ID[pr.start.R].x) / 2 + 0.35, -1.6, 1.6);
+    climber.faceWall();
     if (!wasStanding || instant) placeStandingAt(sx, zSafe + 0.15);
     else {
       const w = standWorld();
@@ -546,7 +547,8 @@ export function startGame() {
           const edge = e.energy < 15 ? t('onTheEdge') : '';
           toast(e.flash ? 'FLASH!' : 'TOP!', t('topLine', fmt(attempt.score), st.perfect, moves, edge), e.flash ? ROLE_HEX.foot : ROLE_HEX.finish, 2.4);
           after(0.95, () => { if (mode === 'topped') climber.fall('drop'); });
-          after(2.8, () => { if (mode === 'topped') endAttempt(); });
+          // back on the mat she turns round and celebrates (climber 'celebrate'), then the next problem
+          after(4.5, () => { if (mode === 'topped') endAttempt(); });
           break;
         }
         case 'bubble': sfx.bubble(e.b.kind); break;
@@ -672,6 +674,12 @@ export function startGame() {
       tmp.set(0, BOARD_H * 0.52, 0.2); wall.localToWorld(focusTarget.copy(tmp));
       const dist = portrait ? 6.2 : 4.8;
       camDesired.set(0.3, Math.max(MAT_TOP + 0.7, focusTarget.y - 0.45 - 1.0 * s), focusTarget.z + dist - 1.0 * s);
+    } else if (mode === 'topped' && climber.celebrating) {
+      // celebration: frame her from the front, chest height, close enough to read the face
+      wall.localToWorld(focusTarget.copy(climber.S));
+      focusTarget.y -= 0.12;
+      const dist = portrait ? 2.9 : 2.4;
+      camDesired.set(focusTarget.x * 0.85 + 0.25, focusTarget.y + 0.05, focusTarget.z + dist);
     } else {
       if (climber.mode === 'fall' || climber.mode === 'stand') { tmp.copy(climber.P); tmp.y += 0.1; }
       else {
@@ -1195,11 +1203,13 @@ export function startGame() {
       updateFade();
       if (climber.mode === 'climb' && (mode === 'climb' || mode === 'title' || mode === 'topped')) driveClimber();
       if (climber.mode === 'stand') {
-        // now and then glance back at the camera over the shoulder, with a smile
-        const glance = (simT % 5.2) > 3.6 || (mode === 'topped');
+        // now and then glance back at the camera over the shoulder, with a smile; after a top she
+        // has turned round and looks straight at it
+        const cel = climber.celebrating;
+        const glance = !cel && (simT % 5.2) > 3.6;
         climber.stand.lookBack = glance;
-        climber.stand.look = glance ? wall.worldToLocal(camLocal.copy(camera.position)) : (climber.stand.boardLook || null);
-        climber.setExpr(glance ? 'happy' : 'calm');
+        climber.stand.look = cel || glance ? wall.worldToLocal(camLocal.copy(camera.position)) : (climber.stand.boardLook || null);
+        climber.setExpr(cel || glance ? 'happy' : 'calm');
       }
       climber.update(sdt, simT, world.angle);
       if (TEST) trackApex();

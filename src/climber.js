@@ -222,24 +222,24 @@ function chainCurve(pts, t, out) {
 }
 
 // ---------- painted textures ----------
-// Racerback sports bra on the chest lathe: u = 0 is the middle of the back, v follows the lathe
-// knots (yToV). Bare midriff under the band, bare shoulder blades, V neckline in front, white trim
-// along every cut, navel on the belly.
+// Racerback climbing tank on the chest lathe: u = 0 is the middle of the back, v follows the lathe
+// knots (yToV). Covers down to the waistband, bare shoulder blades (they read from behind), a
+// rounded scoop neck in front, white trim along every cut.
 function drawTank(yToV) {
   const W = 256, c = document.createElement('canvas');
   c.width = c.height = W;
   const g = c.getContext('2d');
   const img = g.createImageData(W, W), D = img.data;
   const hex = (h) => [parseInt(h.slice(1, 3), 16), parseInt(h.slice(3, 5), 16), parseInt(h.slice(5, 7), 16)];
-  const SH = hex(COLORS.shirt), SD = hex(COLORS.shirtDark), SK = hex(COLORS.skin), TR = hex(COLORS.trim), NV = hex(COLORS.skinDark);
-  const vBand = yToV(0.135), vNavel = yToV(0.05);
+  const SH = hex(COLORS.shirt), SD = hex(COLORS.shirtDark), SK = hex(COLORS.skin), TR = hex(COLORS.trim);
+  const vBand = yToV(-0.03);
   // top cut: v above which it is skin, as a function of the angular distance d from the back middle
   const cut = (d) => {
     if (d < 0.035) return 2; // racerback strap up to the neck
     if (d < 0.2) return yToV(0.205 + 0.13 * (1 - smoothstep((d - 0.035) / 0.12))); // shoulder blades bare
     if (d < 0.3) return yToV(0.205); // arm holes
     if (d < 0.35) return 2; // front straps
-    return yToV(0.29 - 0.055 * smoothstep((d - 0.38) / 0.12)); // V neckline
+    return yToV(0.315 - 0.04 * smoothstep((d - 0.37) / 0.13)); // scoop neck
   };
   const skin = new Uint8Array(W * W);
   for (let y = 0; y < W; y++) for (let x = 0; x < W; x++) {
@@ -252,11 +252,8 @@ function drawTank(yToV) {
     for (let x = 0; x < W; x++) {
       const u = (x + 0.5) / W, d = Math.min(u, 1 - u);
       let col = SH;
-      if (skin[y * W + x]) {
-        col = SK;
-        const nx = (u - 0.5) * W, ny = (v - vNavel) * W;
-        if (nx * nx / 4 + ny * ny / 12 < 1) col = NV; // navel
-      } else {
+      if (skin[y * W + x]) col = SK;
+      else {
         let near = false;
         for (let dy = -R; dy <= R && !near; dy++) for (let dx = -R; dx <= R; dx++) {
           const yy = y + dy;
@@ -265,7 +262,6 @@ function drawTank(yToV) {
         }
         if (near) col = TR;
         else if (d < 0.007) col = SD; // racerback seam
-        else if (d > 0.493 && v < cut(0.5) - 0.02) col = SD; // centre seam between the cups
       }
       const o = (y * W + x) * 4;
       D[o] = col[0]; D[o + 1] = col[1]; D[o + 2] = col[2]; D[o + 3] = 255;
@@ -476,7 +472,9 @@ export class Climber {
       hipDrive: false, // keep the pelvis on its spring with the feet off (dyno rise)
     };
     this.pulse = { L: 0, R: 0, F: 0 }; // short white flashes fired by the game (catch), decaying
-    this.stand = { mid: new V3(), action: 'idle', t0: 0, nextChalk: 3, cheerUntil: 0, look: null };
+    // standing: face 0 = toward the wall, 1 = turned round to the camera (celebration)
+    this.stand = { mid: new V3(), action: 'idle', t0: 0, nextChalk: 3, look: null, face: 0, faceTarget: 0, hop: 0 };
+    this.sRight = new V3(1, 0, 0); this.sFwd = new V3(0, 0, -1); // standing basis, turned by stand.face
     this.fallSt = null;
     this.expr = 'calm'; this.shownExpr = ''; this.nextBlink = 2; this.blinkUntil = 0;
     this.enterUntil = 0;
@@ -491,7 +489,7 @@ export class Climber {
   build() {
     const M = (color, rim = 0.3) => addRim(new THREE.MeshToonMaterial({ color, gradientMap: RAMP }), rim);
     // chest lathe: narrow waist, ribcage, shoulders (radius, height above the waist joint)
-    const CH = [[0.02, -0.04], [0.106, -0.035], [0.104, 0.0], [0.108, 0.06], [0.128, 0.13], [0.15, 0.2], [0.166, 0.26], [0.156, 0.31], [0.122, 0.343], [0.076, 0.363], [0.02, 0.371]];
+    const CH = [[0.02, -0.04], [0.104, -0.035], [0.1, 0.0], [0.104, 0.06], [0.128, 0.13], [0.154, 0.2], [0.172, 0.26], [0.162, 0.31], [0.124, 0.343], [0.076, 0.363], [0.02, 0.371]];
     const CH_D = 0.66;
     const yToV = (y) => { // lathe v (one step per knot) at height y
       for (let k = 1; k < CH.length; k++) if (y <= CH[k][1]) return (k - 1 + clamp((y - CH[k - 1][1]) / (CH[k][1] - CH[k - 1][1]), 0, 1)) / (CH.length - 1);
@@ -530,13 +528,13 @@ export class Climber {
     const blades = [-1, 1].map((s) => projectUV(baked(new THREE.SphereGeometry(0.052, 16, 12), { p: [s * 0.07, 0.238, 0.09], r: [0.15, 0, s * -0.25], s: [1, 1.3, 0.38] })));
     // bust (local -z is the front): teardrop cups, a gentle upper slope into the chest and a full
     // lower curve, toed out a little
-    const cupGeo = new THREE.SphereGeometry(0.066, 20, 16);
+    const cupGeo = new THREE.SphereGeometry(0.056, 20, 16);
     { const P = cupGeo.attributes.position;
-      for (let i = 0; i < P.count; i++) { const y = P.getY(i) / 0.066; P.setZ(i, P.getZ(i) * (1 - 0.5 * Math.max(0, y) ** 1.5)); }
+      for (let i = 0; i < P.count; i++) { const y = P.getY(i) / 0.056; P.setZ(i, P.getZ(i) * (1 - 0.5 * Math.max(0, y) ** 1.5)); }
       cupGeo.computeVertexNormals(); }
-    const bust = [-1, 1].map((s) => projectUV(baked(cupGeo, { p: [s * 0.054, 0.21, -0.062], r: [0.1, s * 0.32, 0], s: [1, 0.95, 0.88] })));
+    const bust = [-1, 1].map((s) => projectUV(baked(cupGeo, { p: [s * 0.052, 0.212, -0.07], r: [0.1, s * 0.32, 0], s: [1, 0.92, 0.8] })));
     add('chest', merge([chestGeo, ...blades, ...bust]), mat.shirt);
-    // shorts: wide hips, round glutes, low waistband
+    // tights: hips, glutes, waistband
     const pelvisGeo = latheGeo([[0.02, -0.125], [0.09, -0.115], [0.135, -0.07], [0.152, 0.0], [0.146, 0.07], [0.128, 0.14], [0.114, 0.185], [0.02, 0.19]], 0.76);
     const glutes = [-1, 1].map((s) => baked(new THREE.SphereGeometry(0.077, 18, 14), { p: [s * 0.06, -0.045, 0.056], s: [1, 1.05, 0.84] }));
     add('pelvis', merge([pelvisGeo, ...glutes]), mat.pants);
@@ -579,9 +577,9 @@ export class Climber {
     // arms: one tapered tube shoulder → wrist (deltoid, bicep, elbow, climber forearm)
     this.armTube = {}; this.legTube = {};
     const ARM = [[0, 0.052], [0.1, 0.052], [0.3, 0.043], [0.5, 0.032], [0.63, 0.044], [0.85, 0.032], [1, 0.027]];
-    // shorts hem high on the thigh (red trim), then bare leg: thigh, slim knee, calf, ankle
-    const LEG = [[0, 0.09], [0.09, 0.086], [0.095, 0.088], [0.11, 0.088], [0.115, 0.079], [0.3, 0.069], [0.47, 0.045], [0.53, 0.045], [0.64, 0.051], [0.82, 0.037], [0.92, 0.031], [1, 0.032]];
-    const legMat = (t) => (t < 0.092 ? 0 : t < 0.113 ? 1 : 2);
+    // 3/4 climbing tights down to mid-calf (red cuff), then bare calf and ankle
+    const LEG = [[0, 0.09], [0.12, 0.081], [0.3, 0.07], [0.47, 0.047], [0.53, 0.047], [0.63, 0.053], [0.68, 0.05], [0.685, 0.052], [0.715, 0.051], [0.72, 0.046], [0.82, 0.038], [0.92, 0.031], [1, 0.032]];
+    const legMat = (t) => (t < 0.683 ? 0 : t < 0.718 ? 1 : 2);
     const fingGeo = (len, r, offs) => merge([-0.026, -0.0087, 0.0087, 0.026].map((x, i) => baked(new THREE.CapsuleGeometry(r, len, 3, 8), { p: [x, len / 2 + offs[i], 0] })));
     const KNUCKLE = [-0.007, 0.002, 0, -0.01];
     for (const s of ['L', 'R']) {
@@ -688,13 +686,16 @@ export class Climber {
     this.root.visible = true;
     this.stand.mid.copy(mid);
     this.stand.action = 'idle'; this.stand.nextChalk = this.now + 2 + Math.random() * 2;
+    this.stand.face = this.stand.faceTarget = 0; this.stand.hop = 0;
+    this.standBasis();
     this.P.copy(mid).addScaledVector(this.wup, 0.85);
     this.S.copy(this.P).addScaledVector(this.wup, BODY.TORSO);
     this.Pv.set(0, 0, 0); this.Sv.set(0, 0, 0);
     for (const s of ['L', 'R']) {
       const sg = s === 'L' ? -1 : 1;
       const f = this.E['F' + s];
-      f.pos.copy(mid).addScaledVector(this.right.set(1, 0, 0), sg * 0.12).addScaledVector(this.wup, 0.07);
+      f.pos.copy(mid).addScaledVector(this.sRight, sg * 0.12).addScaledVector(this.wup, 0.07);
+      this.right.set(1, 0, 0);
       f.target.copy(f.pos); f.tweening = false; f.vel.set(0, 0, 0);
       const h = this.E['H' + s];
       h.pos.copy(this.S).addScaledVector(this.right, sg * 0.24).addScaledVector(this.wup, -0.55);
@@ -707,7 +708,8 @@ export class Climber {
   standFromHere(mid, cheer) {
     this.mode = 'stand';
     this.stand.mid.copy(mid);
-    this.stand.action = cheer ? 'cheer' : 'idle';
+    this.stand.action = cheer ? 'celebrate' : 'idle';
+    if (cheer) this.stand.faceTarget = 1;
     this.stand.t0 = this.now;
     this.stand.nextChalk = this.now + 3;
     for (const s of ['L', 'R']) {
@@ -718,6 +720,9 @@ export class Climber {
     }
     this.fallSt = null;
   }
+  // stop celebrating and turn back to the wall (next problem)
+  faceWall() { if (this.stand.action === 'celebrate') this.stand.action = 'idle'; this.stand.faceTarget = 0; this.stand.hop = 0; }
+  get celebrating() { return this.mode === 'stand' && (this.stand.action === 'celebrate' || this.stand.face > 0.2); }
   // pull on to the start holds (targets come from the next setClimb input)
   beginClimb() {
     this.mode = 'climb';
@@ -821,39 +826,68 @@ export class Climber {
     this.grip.R += (I.gripR - this.grip.R) * (1 - Math.exp(-dt * gr));
   }
 
+  // standing basis: right / forward turned about world up by stand.face (0 = facing the wall)
+  standBasis() {
+    const a = Math.PI * this.stand.face;
+    this.sRight.set(1, 0, 0).applyAxisAngle(this.wup, a);
+    this.sFwd.copy(this.toWall).applyAxisAngle(this.wup, a);
+  }
+  // celebration after a top (t = time since landing): turn to the camera, crouch, hop with both
+  // arms up in a V, then a fist pump; returns the hop height for the pelvis and feet
+  celebrateHop(t) {
+    if (t < 0.45) return 0;
+    if (t < 0.68) return -0.09 * smoothstep((t - 0.45) / 0.23);
+    if (t < 1.06) { const u = (t - 0.68) / 0.38; return -0.09 + 0.27 * (1 - (2 * u - 1) ** 2) + 0.09 * u; }
+    if (t < 1.3) return -0.06 * Math.sin(Math.PI * (t - 1.06) / 0.24);
+    return 0;
+  }
   driveEffectorsStand(now, dt) {
     const st = this.stand;
-    const r = _tmpC.set(1, 0, 0);
+    if (st.action === 'celebrate' && now - st.t0 > 3.1) { st.action = 'idle'; st.nextChalk = now + 2.5; }
+    // the turn: a quick pivot (~0.5 s) to the camera, an easy one back to the wall
+    st.face += (st.faceTarget - st.face) * (1 - Math.exp(-dt * (st.faceTarget > st.face ? 7 : 3.5)));
+    if (Math.abs(st.face - st.faceTarget) < 0.002) st.face = st.faceTarget;
+    this.standBasis();
+    const r = this.sRight, fwd = this.sFwd;
+    const tt = now - st.t0;
+    st.hop = st.action === 'celebrate' ? this.celebrateHop(tt) : 0;
+    const air = Math.max(0, st.hop);
     for (const s of ['L', 'R']) {
       const sg = s === 'L' ? -1 : 1;
-      _tmpB.copy(st.mid).addScaledVector(r, sg * 0.12).addScaledVector(this.wup, 0.07);
+      _tmpB.copy(st.mid).addScaledVector(r, sg * 0.12).addScaledVector(this.wup, 0.07 + air);
       const f = this.E['F' + s];
       f.liftDir.copy(this.wup);
-      f.drive(_tmpB, false, now, (e) => this.onStep && this.onStep(e));
+      if (air > 0.01) f.spring(_tmpB, dt, 400, 30); // in the air: the feet follow the body
+      else f.drive(_tmpB, false, now, (e) => this.onStep && this.onStep(e));
     }
-    if (st.action === 'idle' && now > st.nextChalk) { st.action = 'chalk'; st.t0 = now; }
+    if (st.action === 'idle' && st.face < 0.05 && now > st.nextChalk) { st.action = 'chalk'; st.t0 = now; }
     if (st.action === 'chalk' && now - st.t0 > 1.4) { st.action = 'idle'; st.nextChalk = now + 3.5 + Math.random() * 3; }
-    if (st.action === 'cheer' && now - st.t0 > 1.8) { st.action = 'idle'; st.nextChalk = now + 2.5; }
-    const tt = now - st.t0;
+    let fist = 0;
     for (const s of ['L', 'R']) {
       const sg = s === 'L' ? -1 : 1;
       const T = _tmpB;
       if (st.action === 'chalk') {
-        T.copy(this.S).addScaledVector(this.wup, -0.22).addScaledVector(this.toWall, 0.17).addScaledVector(r, sg * 0.035);
+        T.copy(this.S).addScaledVector(this.wup, -0.22).addScaledVector(fwd, 0.17).addScaledVector(r, sg * 0.035);
         T.addScaledVector(this.wup, Math.sin(tt * 14 + (sg > 0 ? 0 : 1.6)) * 0.03).addScaledVector(r, Math.cos(tt * 14) * 0.02);
         if (s === 'R' && tt > 0.5 && !st.puffed) { st.puffed = true; if (this.onChalk) this.onChalk(T.clone()); }
-      } else if (st.action === 'cheer' && s === 'R' && tt < 1.6) {
-        const pump = Math.sin(Math.min(1, tt / 0.3) * Math.PI / 2) - 0.1 * Math.max(0, Math.sin((tt - 0.3) * 9));
-        T.copy(this.S).addScaledVector(r, 0.2).addScaledVector(this.wup, -0.45 + 1.05 * pump).addScaledVector(this.awayH, 0.05);
+      } else if (st.action === 'celebrate' && tt > 0.5 && tt < 2.9) {
+        fist = 1;
+        // both arms shoot up in a V on the hop; then the right one pumps, the left stays up
+        const upK = smoothstep((tt - 0.5) / 0.22) * (1 - smoothstep((tt - 2.55) / 0.35));
+        const pumpOn = s === 'R' && tt > 1.35;
+        const pump = pumpOn ? 0.5 + 0.5 * Math.cos((tt - 1.35) * Math.PI * 2 * 2.2) : 1;
+        T.copy(this.S).addScaledVector(r, sg * (BODY.SHW + 0.06)).addScaledVector(this.wup, -0.56);
+        _tmpA.copy(this.S).addScaledVector(r, sg * (pumpOn ? 0.22 : 0.33)).addScaledVector(this.wup, pumpOn ? 0.1 + 0.46 * pump : 0.58).addScaledVector(fwd, -0.05 + (pumpOn ? 0.1 * (1 - pump) : 0));
+        T.lerp(_tmpA, upK);
       } else {
-        T.copy(this.S).addScaledVector(r, sg * (BODY.SHW + 0.075)).addScaledVector(this.wup, -0.56).addScaledVector(this.awayH, 0.03);
+        T.copy(this.S).addScaledVector(r, sg * (BODY.SHW + 0.075)).addScaledVector(this.wup, -0.56).addScaledVector(fwd, -0.03);
         T.addScaledVector(this.wup, Math.sin(this.now * 1.6 + sg) * 0.008);
       }
-      this.E['H' + s].spring(T, dt, 120, 14);
+      this.E['H' + s].spring(T, dt, st.action === 'celebrate' ? 220 : 120, st.action === 'celebrate' ? 18 : 14);
     }
     if (st.action !== 'chalk') st.puffed = false;
-    this.grip.L += (0 - this.grip.L) * (1 - Math.exp(-dt * 10));
-    this.grip.R += (0 - this.grip.R) * (1 - Math.exp(-dt * 10));
+    this.grip.L += (fist - this.grip.L) * (1 - Math.exp(-dt * 10));
+    this.grip.R += (fist - this.grip.R) * (1 - Math.exp(-dt * 10));
   }
 
   // one physics substep
@@ -876,10 +910,10 @@ export class Climber {
       feetOn = true;
       const st = this.stand;
       const squat = st.action === 'chalk' ? 0.02 : 0;
-      Pt.copy(st.mid).addScaledVector(this.wup, 0.85 - squat);
-      St.copy(Pt).addScaledVector(this.wup, BODY.TORSO).addScaledVector(this.toWall, 0.02);
-      if (st.action === 'cheer') St.addScaledVector(this.awayH, 0.03);
-      kP = 160; cPf = 0.55;
+      Pt.copy(st.mid).addScaledVector(this.wup, 0.85 - squat + st.hop);
+      St.copy(Pt).addScaledVector(this.wup, BODY.TORSO).addScaledVector(this.sFwd, st.hop < 0 ? 0.08 : 0.02);
+      kP = st.action === 'celebrate' ? 420 : 160; cPf = 0.55;
+      if (st.action === 'celebrate') kS = 600;
       hipSpring = true;
     }
     const cS = 2 * Math.sqrt(kS);
@@ -978,7 +1012,7 @@ export class Climber {
       if (_tmpA.x < 0.35) { _tmpA.x = 0.35; _tmpA.normalize(); }
       _tmpA.lerp(_tmpB.set(1, 0, 0), 0.35);
     } else if (this.mode === 'fall' && this.fallSt) _tmpA.copy(this.fallSt.right);
-    else _tmpA.set(1, 0, 0);
+    else _tmpA.copy(this.sRight);
     orthoNormal(_tmpA, _tmpA, up);
     this.shAxis.lerp(_tmpA, 1 - Math.exp(-dt * 14));
     orthoNormal(this.shAxis, this.shAxis, up);
@@ -1084,7 +1118,8 @@ export class Climber {
       const shin = _tmpA.subVectors(kn, an).normalize();
       const toe = _tmpB;
       if (this.mode === 'climb' && I.feetOn) toe.set(0, 0.32, -1).normalize();
-      else if (this.mode === 'stand' || (this.mode === 'fall' && this.fallSt && this.fallSt.kind === 'drop')) toe.copy(this.toWall);
+      else if (this.mode === 'stand') toe.copy(this.sFwd);
+      else if (this.mode === 'fall' && this.fallSt && this.fallSt.kind === 'drop') toe.copy(this.toWall);
       else toe.copy(back).multiplyScalar(-0.6).addScaledVector(shin, -0.8).normalize();
       orthoNormal(toe, toe, shin);
       const x = _tmpC.crossVectors(toe, shin);
