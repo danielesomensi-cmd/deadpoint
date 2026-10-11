@@ -168,6 +168,26 @@ try {
     report.paused = await ev('__DP.paused');
     await page.click('#btnQuit');
     report.after_quit = await ev('__DP.mode');
+    // daily problem: same day = same problem and bubbles; results saved per day, streak on the title
+    await ev('__bot.on = false; __bot.miss = false');
+    await page.click('#btnDaily');
+    await wait('__DP.mode === "intro"');
+    const d1 = await ev('JSON.stringify({ k: __DP.session.daily.key, g: __DP.session.g, n: __DP.session.problem.name, j: __DP.session.startAttempt().jump && __DP.session.startAttempt().jump.i })');
+    await ev('__DP.startDaily()');
+    await wait('__DP.mode === "intro"');
+    const d2 = await ev('JSON.stringify({ k: __DP.session.daily.key, g: __DP.session.g, n: __DP.session.problem.name, j: __DP.session.startAttempt().jump && __DP.session.startAttempt().jump.i })');
+    if (d1 !== d2) errors.push(`daily not reproducible: ${d1} vs ${d2}`);
+    report.daily = JSON.parse(d1);
+    if (report.daily.g < 4 || report.daily.g > 8) errors.push('daily grade outside 6b+..7b');
+    await ev('__bot.fire()');
+    await wait('__DP.mode === "climb"');
+    await ev('__bot.miss = true; __bot.on = true');
+    await page.waitForFunction('__DP.mode === "over"', null, { timeout: 90000 });
+    report.daily_saved = await ev(`localStorage.getItem('deadpoint:daily:' + __DP.session.daily.key)`);
+    if (!report.daily_saved) errors.push('daily result not saved');
+    report.daily_over = await ev('document.getElementById("overEyebrow").textContent + " | " + document.getElementById("overSub").textContent');
+    await page.click('#btnMenu');
+    report.daily_line = await ev('document.getElementById("dailyLine").textContent');
   } else if (RUN === 'visual') {
     await frames(3);
     await shot('01_title');

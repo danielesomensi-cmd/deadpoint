@@ -1,6 +1,6 @@
 // DEADPOINT — game flow, input, HUD, camera, and choreography (what the climber does, when).
 import * as THREE from 'three';
-import { Session, TUNE, HOLD_TYPES, GRADES, gradeLabel, gradeParams, makeBoard, clamp, BOARD_H, BOARD_W, KICK_TOP, MAT_TOP, LADDER, migrateGrade } from './logic.js';
+import { Session, TUNE, HOLD_TYPES, GRADES, gradeLabel, gradeParams, makeBoard, clamp, BOARD_H, BOARD_W, KICK_TOP, MAT_TOP, LADDER, migrateGrade, dailySeed, dailyKey, dailyGrade } from './logic.js';
 import { Sound } from './audio.js';
 import { createWorld, gripPos as holdGrip, footPos, ROLE_HEX } from './world.js';
 import { Climber } from './climber.js';
@@ -302,12 +302,17 @@ export function startGame() {
     climber.setExpr('calm');
   }
 
-  function startSession(g) {
+  function startSession(g, daily = false) {
     sfx.init();
     sfx.setLevel(1);
     clearTimers(); fade = null;
-    session = new Session({ board: BOARD_HOLDS, startGrade: g });
-    startG = g; store.set('startG', g);
+    if (daily) {
+      const d = today();
+      session = new Session({ board: BOARD_HOLDS, daily: { seed: dailySeed(d), key: dailyKey(d) } });
+    } else {
+      session = new Session({ board: BOARD_HOLDS, startGrade: g });
+      startG = g; store.set('startG', g);
+    }
     $('title').hidden = true; $('over').hidden = true;
     $('hud').hidden = false; $('hint').hidden = false; $('controls').hidden = false;
     try { if (navigator.wakeLock) navigator.wakeLock.request('screen').catch(() => {}); } catch (e) { /* not available */ }
@@ -385,6 +390,11 @@ export function startGame() {
     sfx.setPump(0);
     sfx.over();
     $('hud').hidden = true; $('hint').hidden = true; $('controls').hidden = true; hideCard();
+    clearBubbles(); tipEl.hidden = true;
+    const daily = !!session.daily;
+    $('overSegWrap').hidden = daily; $('btnMenu').hidden = !daily;
+    $('btnAgain').textContent = daily ? t('dailyAgain') : t('btnAgain');
+    if (daily) { dailyOver(); $('over').hidden = false; updateRecordLine(); return; }
     const best = session.bestG;
     const prevBest = store.get('bestScore', 0), prevG = store.get('bestG', -1);
     const newRecord = session.score > prevBest;
@@ -402,6 +412,46 @@ export function startGame() {
     setSeg('overSeg', startG);
     $('over').hidden = false;
     updateRecordLine();
+  }
+
+  // ===================== Daily problem =====================
+  // results per local day in localStorage 'deadpoint:daily:YYYY-MM-DD': { best, topped, attempts }
+  const today = () => (TEST && window.__DP_DATE ? new Date(window.__DP_DATE) : new Date());
+  const dayBefore = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate() - 1);
+  const dailyGet = (d) => store.get('daily:' + dailyKey(d), null);
+  // consecutive days topped, up to today (or up to yesterday while today is still open)
+  function dailyStreak() {
+    let d = today(), n = 0;
+    if (!(dailyGet(d) || {}).topped) d = dayBefore(d);
+    for (let r; (r = dailyGet(d)) && r.topped; d = dayBefore(d)) n++;
+    return n;
+  }
+  function dailyOver() {
+    const d = today(), prev = dailyGet(d) || { best: 0, topped: false, attempts: 0 };
+    const topped = session.completed === true, used = topped ? session.log[0].attempts : TUNE.attempts;
+    const rec = {
+      best: Math.max(prev.best, session.score),
+      topped: prev.topped || topped,
+      // attempts used: the fewest it took to top, else the attempts of the last try
+      attempts: topped ? (prev.topped ? Math.min(prev.attempts, used) : used) : prev.topped ? prev.attempts : used,
+    };
+    store.set('daily:' + dailyKey(d), rec);
+    $('overEyebrow').textContent = t('dailyTitle') + ' · ' + dailyKey(d);
+    $('overGrade').textContent = gradeLabel(session.problem.grade);
+    $('overSub').textContent = topped ? t('dailyTopped', used) : t('dailyFailed');
+    $('overSends').innerHTML = '';
+    $('overScore').textContent = fmt(session.score);
+    $('overFlash').textContent = topped && used === 1 ? '✓' : '—';
+    $('overBest').textContent = fmt(rec.best);
+    $('overStreak').hidden = false;
+    $('overStreak').innerHTML = t('dailyStreak', dailyStreak());
+  }
+  function updateDailyLine() {
+    const d = today(), r = dailyGet(d), g = dailyGrade(dailySeed(d)), st = dailyStreak();
+    let line = `<b>${gradeLabel(g)}</b> · ${gradeParams(g).angle}°`;
+    if (r) line += ' · ' + (r.topped ? t('dailyDone', fmt(r.best), r.attempts) : t('dailyBestOnly', fmt(r.best)));
+    if (st > 0) line += ' · ' + t('dailyStreak', st);
+    $('dailyLine').innerHTML = line;
   }
 
   function goTitle() {
@@ -893,7 +943,7 @@ export function startGame() {
     if (force) {
       hud.grade.textContent = gradeLabel(pr.grade);
       hud.angle.textContent = pr.angle + '°';
-      hud.name.innerHTML = `${t('problemN', session.log.length + 1)} · <b>${problemName(pr)}</b>`;
+      hud.name.innerHTML = `${session.daily ? t('dailyTitle') : t('problemN', session.log.length + 1)} · <b>${problemName(pr)}</b>`;
       for (let i = 0; i < hud.tries.length; i++) {
         hud.tries[i].className = i + 1 < session.attemptNo ? 'used' : i + 1 === session.attemptNo ? 'now' : '';
       }
@@ -1074,7 +1124,8 @@ export function startGame() {
   const cardEl = $('card'), toastEl = $('toast');
   function showCard(pr) {
     const num = session.log.length + 1;
-    cardEl.innerHTML = `<div class="card-in"><div class="n">${t('cardHead', num, session.attemptNo, TUNE.attempts)}</div>`
+    const head = session.daily ? t('cardDaily', session.daily.key, session.attemptNo, TUNE.attempts) : t('cardHead', num, session.attemptNo, TUNE.attempts);
+    cardEl.innerHTML = `<div class="card-in"><div class="n">${head}</div>`
       + `<div class="t">${problemName(pr)}</div><div class="s">${gradeLabel(pr.grade)} <span>${t('cardSub', pr.angle, pr.moves.length)}</span></div>`
       + `<div class="tap">${t('tapToStart')}</div></div>`;
     cardEl.hidden = false;
@@ -1148,7 +1199,9 @@ export function startGame() {
     });
   }
   $('btnStart').addEventListener('click', () => { sfx.init(); sfx.ui(); startSession(startG); });
-  $('btnAgain').addEventListener('click', () => { sfx.init(); sfx.ui(); startSession(startG); });
+  $('btnAgain').addEventListener('click', () => { sfx.init(); sfx.ui(); startSession(startG, !!(session && session.daily)); });
+  $('btnDaily').addEventListener('click', () => { sfx.init(); sfx.ui(); startSession(startG, true); });
+  $('btnMenu').addEventListener('click', () => { sfx.ui(); goTitle(); });
   $('btnPause').addEventListener('click', (e) => { e.stopPropagation(); togglePause(true); });
   $('btnResume').addEventListener('click', () => { togglePause(false); sfx.ui(); });
   $('btnMute').addEventListener('click', () => {
@@ -1157,6 +1210,8 @@ export function startGame() {
   });
   $('btnQuit').addEventListener('click', () => { sfx.pause(false); goTitle(); });
   function updateRecordLine() {
+    updateDailyLine();
+    $('overStreak').hidden = !(session && session.daily);
     const bs = store.get('bestScore', 0), bg = store.get('bestG', -1);
     $('recordLine').innerHTML = bs > 0
       ? t('recordLine', bg >= 0 ? gradeLabel(bg) : '—', fmt(bs))
@@ -1283,7 +1338,7 @@ export function startGame() {
       get busy() { return fading() || climber.entering; },
       get timeScale() { return timeScale; }, get tutorialLeft() { return tutorialLeft; }, set tutorialLeft(v) { tutorialLeft = v; },
       get quality() { return world.quality; }, get apexLog() { return apex.log; }, get teachHold() { return teachHold; },
-      start: (g) => startSession(g || 0), skip: () => finishIntro(), sfx, Sound, climber, world,
+      start: (g) => startSession(g || 0), startDaily: () => startSession(0, true), skip: () => finishIntro(), sfx, Sound, climber, world,
       TUNE, HOLD_TYPES,
     };
   }

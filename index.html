@@ -68,6 +68,7 @@
       <button id="sg8" data-g="8" aria-pressed="false">7b<small>50°</small></button>
     </div>
     <button class="btn" id="btnStart" data-i18n="btnStart">Inizia sessione</button>
+    <button class="btn ghost daily" id="btnDaily"><span data-i18n="btnDaily">Blocco del giorno</span><small id="dailyLine"></small></button>
     <div class="meta" id="recordLine">Tre tentativi per blocco. Meglio con l'audio.</div>
   </div>
 </section>
@@ -84,6 +85,8 @@
       <div class="stat"><div class="k">Flash</div><div class="v" id="overFlash">0</div></div>
       <div class="stat"><div class="k" data-i18n="statBest">Record</div><div class="v" id="overBest">0</div></div>
     </div>
+    <div class="meta" id="overStreak" hidden></div>
+    <div id="overSegWrap" class="seg-wrap">
     <div class="seg-label" data-i18n="restartFrom">Riparti da</div>
     <div class="seg" id="overSeg">
       <button id="og0" data-g="0" aria-pressed="true">4<small>20°</small></button>
@@ -91,7 +94,9 @@
       <button id="og6" data-g="6" aria-pressed="false">7a<small>45°</small></button>
       <button id="og8" data-g="8" aria-pressed="false">7b<small>50°</small></button>
     </div>
+    </div>
     <button class="btn" id="btnAgain" data-i18n="btnAgain">Nuova sessione</button>
+    <button class="btn ghost" id="btnMenu" hidden data-i18n="btnMenu">Menu</button>
   </div>
 </section>
 

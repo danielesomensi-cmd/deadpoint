@@ -697,15 +697,29 @@ export class Attempt {
   }
 }
 
+// ---------- Daily problem: the local date is the seed ----------
+// Same day = same problem, same grade (6b+..7b) and, through Attempt.rng, the same bubbles.
+export function dailySeed(date) { return date.getFullYear() * 10000 + (date.getMonth() + 1) * 100 + date.getDate(); }
+export function dailyKey(date) {
+  const p = (n) => String(n).padStart(2, '0');
+  return `${date.getFullYear()}-${p(date.getMonth() + 1)}-${p(date.getDate())}`;
+}
+export const DAILY_GRADES = [4, 8]; // 6b+ .. 7b
+export function dailyGrade(seed) {
+  const r = mulberry32((seed ^ 0xda117) >>> 0)();
+  return DAILY_GRADES[0] + Math.floor(r * (DAILY_GRADES[1] - DAILY_GRADES[0] + 1));
+}
+
 // ---------- Session: a pyramid of problems, 3 attempts each ----------
 export class Session {
   constructor(opts = {}) {
     this.board = opts.board || makeBoard();
     this.boardById = {};
     for (const h of this.board) this.boardById[h.id] = h;
-    this.seed = (opts.seed ?? (Date.now() & 0x7fffffff)) >>> 0;
+    this.daily = opts.daily ?? null; // daily: { seed, key } (one problem, then over)
+    this.seed = ((this.daily ? this.daily.seed : opts.seed) ?? (Date.now() & 0x7fffffff)) >>> 0;
     this.rng = mulberry32(this.seed);
-    this.g = opts.startGrade ?? 0;
+    this.g = this.daily ? dailyGrade(this.daily.seed) : opts.startGrade ?? 0;
     this.attemptNo = 1;
     this.score = 0;
     this.combo = 0;
@@ -734,6 +748,7 @@ export class Session {
     if (a.result === 'top') {
       this.combo = a.combo;
       this.log.push({ g: this.g, attempts: this.attemptNo, name: this.problem.name });
+      if (this.daily) { this.over = true; this.completed = true; return 'over'; }
       if (this.g >= MAX_G) { this.over = true; this.completed = true; return 'over'; }
       this.g++;
       this.newProblem();

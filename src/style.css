@@ -180,6 +180,10 @@ button:focus-visible { outline: 2px solid var(--led-hand); outline-offset: 2px; 
   font-family: var(--font-display); font-weight: 900; font-size: 26px; letter-spacing: .04em; text-transform: uppercase; }
 .btn:active { transform: translateY(1px); }
 .btn.ghost { background: transparent; color: var(--chalk); border: 1px solid var(--line); font-size: 20px; }
+.btn.daily { display: grid; gap: 3px; padding: 11px 14px 10px; }
+.btn.daily small { font-family: var(--font-ui); font-size: 13px; font-weight: 600; letter-spacing: .02em; text-transform: none; color: var(--chalk-dim); }
+.btn.daily small b { color: var(--chalk); }
+.seg-wrap { display: grid; gap: 16px; }
 .row { display: flex; gap: 8px; }
 .row > * { flex: 1; }
 .meta { font-size: 13px; color: var(--chalk-dim); font-weight: 600; }
