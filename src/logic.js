@@ -91,6 +91,9 @@ export const TUNE = {
   // chalk bubble: every 2-3 hand moves, lives chalkLife s; tapped = the next chalkCatches catches get
   // wider windows and the hang drains less
   chalkLife: 2.0, chalkCatches: 3, chalkWin: 1.15, chalkDrain: 0.9,
+  // jump bubble (from 6a+): one per problem when two moves can merge into one dyno; its countdown
+  // runs from jumpLife[0] s at 6a+ down to jumpLife[1] s at 8a. Tapped in time = next launch is a JUMP.
+  jumpFrom: 3, jumpLife: [1.2, 0.6], jumpReach: 1.3, jumpSpan: 1.2, jumpPts: 2.5,
   attempts: 3,
 };
 
@@ -364,6 +367,35 @@ export class Attempt {
     this.bubbles = {};      // live bubbles by kind: { kind, t0, life, u, v, a }
     this.chalkIn = 2 + (this.rng() < 0.5 ? 0 : 1); // hand moves until the next chalk bubble
     this.chalk = 0;         // catches left with the chalk bonus
+    this.jump = this.planJump(); // { i, mv }: moves[i] and moves[i+1] can merge into one dyno
+    this.jumpArmed = false;
+  }
+  // Pick (with the attempt's rng) a pair of moves that merge into a plausible jump: same hand,
+  // not the first move, not into the finish, reach <= jumpReach, span <= jumpSpan, hands not crossed.
+  planJump() {
+    const P = this.P, ms = P.moves;
+    if (this.g < TUNE.jumpFrom) return null;
+    const H = (id) => this.S.boardById[id];
+    let L = P.start.L, R = P.start.R;
+    const cands = [];
+    for (let i = 0; i < ms.length; i++) {
+      const m0 = ms[i], m1 = ms[i + 1];
+      if (i >= 1 && m1 && !m1.finish && i + 1 < ms.length - 1 && m0.hand === m1.hand && !m0.finish) {
+        const from = H(m0.hand === 'L' ? L : R), other = H(m0.hand === 'L' ? R : L), to = H(m1.to);
+        const reach = Math.hypot(to.x - from.x, to.y - from.y), span = Math.hypot(to.x - other.x, to.y - other.y);
+        const crossed = m0.hand === 'L' ? to.x > other.x + 0.1 : to.x < other.x - 0.1;
+        if (reach <= TUNE.jumpReach && span <= TUNE.jumpSpan && !crossed && L !== R) {
+          cands.push({ i, mv: { hand: m0.hand, from: from.id, to: m1.to, d: reach, dyno: true, jump: true, skip: 2, feetCut: this.angle >= 40, finish: false } });
+        }
+      }
+      if (m0.hand === 'L') L = m0.to; else R = m0.to;
+    }
+    return cands.length ? cands[Math.floor(this.rng() * cands.length)] : null;
+  }
+  jumpLife() {
+    const g8a = GRADES.findIndex((G) => G.f === '8a');
+    const k = clamp((this.g - TUNE.jumpFrom) / Math.max(1, g8a - TUNE.jumpFrom), 0, 1);
+    return lerp(TUNE.jumpLife[0], TUNE.jumpLife[1], k);
   }
   // a bubble at a random spot (u, v in 0..1 of the free screen area) drifting along angle a
   spawnBubble(kind, life, extra = {}) {
@@ -379,6 +411,7 @@ export class Attempt {
     if (!b || this.done || t > b.t0 + b.life) return false;
     delete this.bubbles[kind];
     if (kind === 'chalk') { this.chalk = TUNE.chalkCatches; this.stats.chalk = (this.stats.chalk || 0) + 1; }
+    if (kind === 'jump') { this.jumpArmed = true; this.stats.jumpArm = (this.stats.jumpArm || 0) + 1; }
     this.emit('bubbleTap', { kind, b });
     return true;
   }
@@ -388,7 +421,11 @@ export class Attempt {
   type(id) { return HOLD_TYPES[this.hold(id).type]; }
   emit(type, data = {}) { this.events.push({ type, t: this.t, ...data }); }
   get done() { return this.state === 'top' || this.state === 'fall'; }
-  nextMove() { return this.P.moves[this.moveIdx] || null; }
+  nextMove() {
+    if (this.state === 'flight' && this.flight) return this.flight.mv; // the move in the air (a jump skips moves[moveIdx])
+    if (this.jumpArmed && this.jump && this.moveIdx === this.jump.i) return this.jump.mv;
+    return this.P.moves[this.moveIdx] || null;
+  }
 
   windows(typeKey, mult = 1) {
     const gp = gradeParams(this.g);
@@ -455,6 +492,11 @@ export class Attempt {
       const b = this.bubbles[k];
       if (t > b.t0 + b.life) { delete this.bubbles[k]; this.emit('bubbleGone', { kind: k }); }
     }
+    const J = this.jump;
+    if (J && !J.offered && this.moveIdx === J.i && (this.state === 'hang' || this.state === 'rest')) {
+      J.offered = true;
+      this.spawnBubble('jump', this.jumpLife());
+    }
     if (this.state === 'rest' && t - this.lastShake > TUNE.shakeHold) { this.state = 'hang'; this.emit('restEnd'); }
     if (this.state !== 'ready') {
       this.energy += this.energyRate() * dt;
@@ -481,9 +523,11 @@ export class Attempt {
     const mv = this.nextMove();
     if (!mv) return;
     if (this.state === 'rest') this.emit('restEnd');
+    if (this.bubbles.jump) { delete this.bubbles.jump; this.emit('bubbleGone', { kind: 'jump' }); }
     const w = this.windows(this.hold(mv.to).type, mv.dyno ? TUNE.dynoWin : 1);
     const T = this.flightTime(mv);
     this.flight = { mv, t0: t, T, dp: t + T, w };
+    if (mv.jump) this.jumpArmed = false;
     this.state = 'flight';
     this.emit('launch', { mv, T, w });
   }
@@ -512,12 +556,13 @@ export class Attempt {
     this.stats[q]++;
     if (q === 'perfect') this.combo++;
     else if (q === 'ok') this.combo = 0;
-    const pts = this.points(q, mv.dyno ? 1.5 : 1);
+    const pts = this.points(q, mv.jump ? TUNE.jumpPts : mv.dyno ? 1.5 : 1);
     this.score += pts;
     this.S.calibrate(off, q);
     if (mv.hand === 'L') this.L = mv.to; else this.R = mv.to;
-    this.moveIdx++;
+    this.moveIdx += mv.skip || 1;
     this.stanceIdx = this.moveIdx;
+    if (mv.jump) this.stats.jump = (this.stats.jump || 0) + 1;
     this.last = { q, off };
     this.flight = null;
     this.useBonus();

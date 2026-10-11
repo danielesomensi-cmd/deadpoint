@@ -123,6 +123,12 @@ button:focus-visible { outline: 2px solid var(--led-hand); outline-offset: 2px; 
   box-shadow: 0 4px 14px rgba(0,0,0,.45), inset 0 -4px 8px rgba(0,0,0,.08); animation: bubIn .25s ease-out, bubBob 1.4s ease-in-out infinite alternate; }
 .bubble.chalk svg { width: 28px; height: 28px; fill: none; stroke: #12161f; stroke-width: 2; stroke-linejoin: round; }
 .bubble.chalk svg circle { fill: #12161f; stroke: none; }
+.bubble.jump { width: 76px; height: 76px; border: 0; color: #fff; background: radial-gradient(circle, rgba(18,22,31,.88) 58%, rgba(18,22,31,.55));
+  box-shadow: 0 4px 14px rgba(0,0,0,.5); animation: bubIn .15s ease-out; }
+.bubble.jump .ring { position: absolute; inset: 0; width: 100%; height: 100%; transform: rotate(-90deg); fill: none; stroke-width: 6; }
+.bubble.jump .trk { stroke: rgba(255,255,255,.25); }
+.bubble.jump .arc { stroke: #fff; stroke-dasharray: 100; stroke-linecap: round; }
+.bubble.jump b { font-family: var(--font-display); font-weight: 900; font-size: 30px; line-height: .9; }
 .bubble span { font-size: 10px; font-weight: 800; letter-spacing: .08em; line-height: 1; margin-top: 1px; }
 .bubble.pop { animation: bubPop .25s ease-out forwards !important; pointer-events: none; }
 @keyframes bubIn { from { scale: .3; } }

@@ -188,7 +188,7 @@ export function startGame() {
         const f = A.flight, mv = f.mv;
         const p = (simT - f.t0) / f.T;
         const Hh = mv.hand === 'L' ? CT.HL : CT.HR;
-        bodyCurve((simT + LEAD - f.t0) / f.T, mv.dyno ? 1.5 : 1);
+        bodyCurve((simT + LEAD - f.t0) / f.T, mv.jump ? 1.8 : mv.dyno ? 1.5 : 1);
         CT.stiff = FLIGHT_STIFF;
         tA.copy(Hh); gripPos(mv.to, tB);
         leadHand(tA, tB, (simT + LEAD - f.t0) / f.T, p, mv.dyno ? 0.1 : 0.14);
@@ -552,6 +552,11 @@ export function startGame() {
             } else for (const h of ['hL', 'hR']) world.puff(climber.J[h].clone(), 4, 0.5);
             popup(climber.S.clone().addScaledVector(BUP, 0.25), t('chalkUp'), t('chalkSub', TUNE.chalkCatches), '#ffffff', 0.85);
           }
+          if (e.kind === 'jump') {
+            popup(climber.S.clone().addScaledVector(BUP, 0.3), t('jumpArmed'), t('jumpSub'), '#ffffff', 1.05);
+            flash(0.1); fovPunch = 1.5;
+            climber.kick(tA.copy(climber.g).multiplyScalar(0.4), 0.3); // she sinks, loading the jump
+          }
           break;
         }
         case 'restStart': sfx.startRest(); break;
@@ -794,7 +799,7 @@ export function startGame() {
         const mv = A.flight.mv;
         const h = HOLD_BY_ID[mv.to];
         gripPos(mv.to, tmp);
-        drawLabel(tmp, holdName(h.type).toUpperCase(), mv.dyno ? t('dyno') : '');
+        drawLabel(tmp, holdName(h.type).toUpperCase(), mv.jump ? t('jump') : mv.dyno ? t('dyno') : '');
         drawGlint(tmp.addScaledVector(BUP, 0.05).addScaledVector(NRM, 0.05), teachHold ? 1 : k);
       } else if (src.kind === 'feet') {
         footPos(A.P.stances[A.stanceIdx].FL, tmp);
@@ -922,7 +927,8 @@ export function startGame() {
     if (!mv) return '';
     const h = HOLD_BY_ID[mv.to];
     let s = `${mv.finish ? t('nextTop') : t('nextHold')}: <b>${holdName(h.type).toUpperCase()}</b>`;
-    if (mv.dyno) s += `<span class="tag">${t('dyno')}</span>`;
+    if (mv.jump) s += `<span class="tag">${t('jump')}</span>`;
+    else if (mv.dyno) s += `<span class="tag">${t('dyno')}</span>`;
     if (mv.feetCut) s += `<span class="warn">${t('feetCut')}</span>`;
     return s;
   }
@@ -950,6 +956,8 @@ export function startGame() {
     return { x: A.left + R + bounce(b.u * w + Math.cos(b.a) * sp * age, w), y: A.top + R + bounce(b.v * h + Math.sin(b.a) * sp * age, h) };
   }
   const BUB_HTML = {
+    // jump: a white arc that empties and a fast 3-2-1 inside (white = timing, never an LED colour)
+    jump: () => `<svg class="ring" viewBox="0 0 80 80" aria-hidden="true"><circle cx="40" cy="40" r="36" class="trk"/><circle cx="40" cy="40" r="36" class="arc" pathLength="100"/></svg><b>3</b><span>${t('bubJump')}</span>`,
     chalk: () => `<svg viewBox="0 0 32 32" aria-hidden="true"><path d="M9 12h14l-1.5 13a2 2 0 0 1-2 1.8h-7a2 2 0 0 1-2-1.8z"/><path d="M8 12c0-2 2-3 8-3s8 1 8 3"/><circle cx="12" cy="6" r="1.4"/><circle cx="17" cy="4.5" r="1.1"/><circle cx="21" cy="6.5" r="1.3"/></svg><span>${t('bubChalk')}</span>`,
   };
   function makeBubble(b) {
@@ -985,7 +993,12 @@ export function startGame() {
       const R = BUB_R[k] || 36, p = bubbleXY(b, R, area);
       el.style.transform = `translate(${Math.round(p.x - R)}px, ${Math.round(p.y - R)}px)`;
       const left = b.t0 + b.life - simT;
-      el.style.opacity = String(clamp(left / 0.35, 0, 1));
+      if (k === 'jump') {
+        const f = clamp(left / b.life, 0, 1), n = Math.max(1, Math.ceil(f * 3));
+        el.querySelector('.arc').style.strokeDashoffset = String(100 * (1 - f));
+        if (el.dataset.n !== String(n)) { el.dataset.n = String(n); el.querySelector('b').textContent = String(n); if (!fresh) sfx.countTick(n); }
+        el.style.opacity = String(clamp(left / 0.12, 0, 1));
+      } else el.style.opacity = String(clamp(left / 0.35, 0, 1));
       if (fresh) tip('bubble_' + k, el, t('tip_' + k));
     }
   }
@@ -996,16 +1009,17 @@ export function startGame() {
   const tipEl = $('tip'), tipsSeen = store.get('tips', {});
   let tipUntil = 0;
   function tip(key, anchor, text) {
-    if (tipsSeen[key] || (TEST && !window.__DP_TIPS)) return;
+    if (tipsSeen[key] || (TEST && !window.__DP_TIPS) || !tipEl.hidden) return; // one at a time: the next waits
     tipsSeen[key] = 1; store.set('tips', tipsSeen);
     tipEl.textContent = text;
     tipEl.hidden = false;
-    const r = anchor.getBoundingClientRect ? anchor.getBoundingClientRect() : anchor;
+    const r = anchor.getBoundingClientRect();
     const tw = Math.min(240, W - 32);
     tipEl.style.width = tw + 'px';
+    const th = tipEl.offsetHeight || 60, hudB = $('hud').getBoundingClientRect().bottom + 6;
     tipEl.style.left = Math.round(clamp(r.left + r.width / 2 - tw / 2, 16, W - 16 - tw)) + 'px';
-    tipEl.style.top = 'auto';
-    tipEl.style.bottom = Math.round(H - r.top + 10) + 'px';
+    // above the anchor, or below it when that would cover the HUD
+    tipEl.style.top = Math.round(r.top - th - 10 >= hudB ? r.top - th - 10 : r.bottom + 10) + 'px';
     tipEl.classList.remove('show'); void tipEl.offsetWidth; tipEl.classList.add('show');
     tipUntil = simT + 3.2;
   }
