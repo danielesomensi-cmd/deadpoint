@@ -50,7 +50,7 @@ const JS = async () => {
 
   // ---- foley, music muted ----
   {
-    const { ctx, S } = make(22);
+    const { ctx, S } = make(26);
     S.music.gain.value = 0; S.mwet.gain.value = 0;
     S.setLevel(1, true);
     // flight 0.3 -> deadpoint 1.1: tic 0.57, tic 0.83, TAC 1.1 (tick() schedules relative to currentTime = 0)
@@ -66,11 +66,13 @@ const JS = async () => {
       ['game over', 13.5, () => { S.setLevel(3); S.over(); }],
       ['led blips', 17.0, () => { for (let i = 0; i < 8; i++) { S.now = () => 17 + i * 0.065; S.ledBlip(i); } }],
       ['match cue', 18.0, () => S.matchCue()], ['ui', 18.6, () => S.ui()], ['grunt', 19.2, () => S.grunt(19.2, 1, 0.16, 0.26)],
+      ['allez', 19.8, () => S.allez(19.8)], ['allez tap', 20.6, () => S.allezTap()], ['bubble', 21.3, () => S.bubble('chalk')],
+      ['pop chalk', 21.7, () => S.pop('chalk')], ['pop jump', 22.4, () => S.pop('jump')], ['count tick', 23.0, () => S.countTick(2)],
     ];
     for (const [, t, fn] of plan) { S.now = () => t; fn(); }
     const buf = await ctx.startRendering();
-    plan.forEach(([name, t0], i) => { out[name] = stats(buf, t0, i + 1 < plan.length ? plan[i + 1][1] : 20); });
-    out['room tone'] = stats(buf, 20.5, 21.9);
+    plan.forEach(([name, t0], i) => { out[name] = stats(buf, t0, i + 1 < plan.length ? plan[i + 1][1] : 23.5); });
+    out['room tone'] = stats(buf, 24.4, 25.9);
   }
   // ---- score at each intensity ----
   const setups = [

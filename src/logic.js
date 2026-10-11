@@ -88,7 +88,7 @@ export const TUNE = {
   flightDrain: 0.65,
   feetDrain: 1.8,
   costBase: 2.2,
-  costPerM: 7,
+  costPerM: 7.5,
   costAngle: (angle) => 0.7 + angle / 55,
   gradeCost: 0.035,      // extra move cost per grade step
   timingMult: { perfect: 0.45, good: 1.0, ok: 1.85 },
@@ -108,6 +108,9 @@ export const TUNE = {
   chalkLife: 2.0, chalkWin: 1.15, chalkDrain: 0.9,
   // jump bubble (from 6a+): one per problem when two moves can merge into one dyno; its countdown
   // runs from jumpLife[0] s at 6a+ down to jumpLife[1] s at 8a. Tapped in time = next launch is a JUMP.
+  // "Allez!" from a friend: once per attempt when energy drops below allezBelow, lives allezLife s;
+  // tapped = +allezEnergy (capped) and allezCatches catches with windows x allezWin
+  allezBelow: 25, allezLife: 1.5, allezEnergy: 10, allezCatches: 2, allezWin: 1.10,
   jumpFrom: 3, jumpLife: [1.2, 0.6], jumpReach: 1.3, jumpSpan: 1.2, jumpPts: 2.5,
   attempts: 3,
 };
@@ -384,6 +387,8 @@ export class Attempt {
     this.chalk = 0;         // catches left with the chalk bonus
     this.jump = this.planJump(); // { i, mv }: moves[i] and moves[i+1] can merge into one dyno
     this.jumpArmed = false;
+    this.allezUsed = false; // the friend shouts at most once per attempt
+    this.allez = 0;         // catches left with the allez bonus
   }
   // Pick (with the attempt's rng) a pair of moves that merge into a plausible jump: same hand,
   // not the first move, not into the finish, reach <= jumpReach, span <= jumpSpan, hands not crossed.
@@ -426,12 +431,17 @@ export class Attempt {
     if (!b || this.done || t > b.t0 + b.life) return false;
     delete this.bubbles[kind];
     if (kind === 'chalk') { this.chalk = gradeParams(this.g).chalkCatches; this.stats.chalk = (this.stats.chalk || 0) + 1; }
+    if (kind === 'allez') {
+      this.energy = Math.min(this.maxEnergy, this.energy + TUNE.allezEnergy);
+      this.allez = TUNE.allezCatches;
+      this.stats.allez = (this.stats.allez || 0) + 1;
+    }
     if (kind === 'jump') { this.jumpArmed = true; this.stats.jumpArm = (this.stats.jumpArm || 0) + 1; }
     this.emit('bubbleTap', { kind, b });
     return true;
   }
   // a judged catch (hand, feet, match) uses up one charge of the bonuses
-  useBonus() { if (this.chalk > 0) this.chalk--; }
+  useBonus() { if (this.chalk > 0) this.chalk--; if (this.allez > 0) this.allez--; }
   hold(id) { return this.S.boardById[id]; }
   type(id) { return HOLD_TYPES[this.hold(id).type]; }
   emit(type, data = {}) { this.events.push({ type, t: this.t, ...data }); }
@@ -446,6 +456,7 @@ export class Attempt {
     const gp = gradeParams(this.g);
     const pump = this.energy >= 40 ? 1 : 0.72 + 0.28 * (this.energy / 40);
     if (this.chalk > 0) mult *= TUNE.chalkWin;
+    if (this.allez > 0) mult *= TUNE.allezWin;
     const k = gp.win * HOLD_TYPES[typeKey].win * pump * mult;
     return { perfect: TUNE.win.perfect * k, good: TUNE.win.good * k, ok: TUNE.win.ok * k };
   }
@@ -517,6 +528,7 @@ export class Attempt {
       this.energy += this.energyRate() * dt;
       if (this.state === 'rest') this.stats.rest += dt;
       if (this.energy <= 0) { this.energy = 0; this.fall('pump'); return; }
+      if (!this.allezUsed && this.energy < TUNE.allezBelow) { this.allezUsed = true; this.spawnBubble('allez', TUNE.allezLife); }
     }
     const lat = this.S.latency;
     if (this.state === 'flight' && t > this.flight.dp + lat + this.flight.w.ok) this.missFlight('late', t - this.flight.dp - lat);

@@ -551,7 +551,9 @@ export function startGame() {
           after(4.5, () => { if (mode === 'topped') endAttempt(); });
           break;
         }
-        case 'bubble': sfx.bubble(e.b.kind); break;
+        case 'bubble':
+          if (e.b.kind === 'allez') sfx.allez(); else sfx.bubble(e.b.kind);
+          break;
         case 'bubbleTap': {
           sfx.pop(e.kind);
           vibrate(10);
@@ -563,6 +565,13 @@ export function startGame() {
               chalkAnim = { t0: simT, hand: r(attempt.L) < r(attempt.R) ? 'L' : 'R', puffed: false };
             } else for (const h of ['hL', 'hR']) world.puff(climber.J[h].clone(), 4, 0.5);
             popup(climber.S.clone().addScaledVector(BUP, 0.25), t('chalkUp'), t('chalkSub', attempt.chalk), '#ffffff', 0.85);
+          }
+          if (e.kind === 'allez') {
+            sfx.allezTap();
+            warmPulse();
+            costFloat(TUNE.allezEnergy);
+            popup(climber.S.clone().addScaledVector(BUP, 0.3), t('allezUp'), t('allezSub', TUNE.allezEnergy), '#ffe2b8', 1);
+            climber.kick(tA.copy(BUP).multiplyScalar(0.25), 0.4); // she pulls in, re-energised
           }
           if (e.kind === 'jump') {
             popup(climber.S.clone().addScaledVector(BUP, 0.3), t('jumpArmed'), t('jumpSub'), '#ffffff', 1.05);
@@ -590,6 +599,12 @@ export function startGame() {
   }
   function vibrate(p) { try { if (navigator.vibrate) navigator.vibrate(p); } catch (e) { /* not allowed */ } }
   function shake(a) { shakeAmp = Math.max(shakeAmp, a); }
+  // allez: a brief warm glow from the edges (not an LED colour)
+  const warmEl = $('warm');
+  function warmPulse() {
+    if (matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    warmEl.classList.remove('on'); void warmEl.offsetWidth; warmEl.classList.add('on');
+  }
   const flashEl = $('flash');
   function flash(o) {
     if (matchMedia('(prefers-reduced-motion: reduce)').matches) return;
@@ -974,6 +989,7 @@ export function startGame() {
     return { x: A.left + R + bounce(b.u * w + Math.cos(b.a) * sp * age, w), y: A.top + R + bounce(b.v * h + Math.sin(b.a) * sp * age, h) };
   }
   const BUB_HTML = {
+    allez: () => `<b>${t('allez')}</b><span>${t('allezTap')}</span>`,
     // jump: a white arc that empties and a fast 3-2-1 inside (white = timing, never an LED colour)
     jump: () => `<svg class="ring" viewBox="0 0 80 80" aria-hidden="true"><circle cx="40" cy="40" r="36" class="trk"/><circle cx="40" cy="40" r="36" class="arc" pathLength="100"/></svg><b>3</b><span>${t('bubJump')}</span>`,
     chalk: () => `<svg viewBox="0 0 32 32" aria-hidden="true"><path d="M9 12h14l-1.5 13a2 2 0 0 1-2 1.8h-7a2 2 0 0 1-2-1.8z"/><path d="M8 12c0-2 2-3 8-3s8 1 8 3"/><circle cx="12" cy="6" r="1.4"/><circle cx="17" cy="4.5" r="1.1"/><circle cx="21" cy="6.5" r="1.3"/></svg><span>${t('bubChalk')}</span>`,
@@ -1008,6 +1024,18 @@ export function startGame() {
       let el = bubEls.get(b), fresh = false;
       if (!el) { el = makeBubble(b); bubEls.set(b, el); fresh = true; }
       area = area || bubbleArea();
+      if (k === 'allez') {
+        // the friend's shout pops up beside her shoulders (on the side with more room)
+        const sp = projectLocal(climber.S), bw = el.offsetWidth || 120, bh = el.offsetHeight || 56;
+        const right = sp.x < W / 2;
+        const x = clamp(right ? sp.x + 34 : sp.x - 34 - bw, area.left, area.right - bw);
+        const y = clamp(sp.y - bh - 20, area.top, area.bottom - bh);
+        el.classList.toggle('flip', !right);
+        el.style.transform = `translate(${Math.round(x)}px, ${Math.round(y)}px)`;
+        el.style.opacity = String(clamp((b.t0 + b.life - simT) / 0.2, 0, 1));
+        if (fresh) tip('bubble_' + k, el, t('tip_' + k));
+        continue;
+      }
       const R = BUB_R[k] || 36, p = bubbleXY(b, R, area);
       el.style.transform = `translate(${Math.round(p.x - R)}px, ${Math.round(p.y - R)}px)`;
       const left = b.t0 + b.life - simT;

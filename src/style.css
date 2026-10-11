@@ -36,6 +36,10 @@ body {
 #scene { touch-action: none; }
 #vignette { position: fixed; inset: 0; pointer-events: none; z-index: 1; opacity: 0;
   background: radial-gradient(ellipse at center, transparent 45%, rgba(255, 60, 30, 0.55) 100%); transition: opacity .25s; }
+#warm { position: fixed; inset: 0; pointer-events: none; z-index: 1; opacity: 0;
+  background: radial-gradient(ellipse at center, transparent 35%, rgba(255, 190, 130, 0.75) 100%); }
+#warm.on { animation: warm .7s ease-out; }
+@keyframes warm { 15% { opacity: 1; } to { opacity: 0; } }
 #flash { position: fixed; inset: 0; pointer-events: none; z-index: 1; background: #fff; opacity: 0; }
 button { font: inherit; color: inherit; cursor: pointer; }
 button:focus-visible { outline: 2px solid var(--led-hand); outline-offset: 2px; }
@@ -79,7 +83,7 @@ button:focus-visible { outline: 2px solid var(--led-hand); outline-offset: 2px; 
 #costLayer { position: fixed; top: 0; left: 0; right: 0; height: 0; z-index: 4; pointer-events: none; }
 .cost { position: absolute; font-weight: 700; font-size: 14px; color: var(--pump); font-variant-numeric: tabular-nums;
   animation: costUp .9s ease-out forwards; text-shadow: 0 1px 2px rgba(0,0,0,.6); }
-.cost.plus { color: var(--led-start); }
+.cost.plus { color: #ffe2b8; }
 @keyframes costUp { from { transform: translateY(0); opacity: 1; } to { transform: translateY(-22px); opacity: 0; } }
 
 #hint { position: fixed; left: 0; right: 0; bottom: 0; z-index: 3; pointer-events: none;
@@ -129,6 +133,15 @@ button:focus-visible { outline: 2px solid var(--led-hand); outline-offset: 2px; 
 .bubble.jump .trk { stroke: rgba(255,255,255,.25); }
 .bubble.jump .arc { stroke: #fff; stroke-dasharray: 100; stroke-linecap: round; }
 .bubble.jump b { font-family: var(--font-display); font-weight: 900; font-size: 30px; line-height: .9; }
+.bubble.allez { border-radius: 18px; padding: 8px 16px 7px; color: #3a2210; background: #fff1dc; border: 2px solid #3a2210;
+  box-shadow: 0 5px 16px rgba(0,0,0,.45); animation: allezIn .25s cubic-bezier(.2,.9,.3,1.4), allezShake .5s ease-in-out .25s infinite; }
+.bubble.allez::after { content: ""; position: absolute; left: 10px; bottom: -11px; border: 6px solid transparent;
+  border-top: 7px solid #3a2210; border-left-color: #3a2210; }
+.bubble.allez.flip::after { left: auto; right: 10px; border-left-color: transparent; border-right-color: #3a2210; }
+.bubble.allez b { font-family: var(--font-display); font-weight: 900; font-size: 30px; line-height: .95; letter-spacing: .01em; }
+.bubble.allez span { opacity: .75; }
+@keyframes allezIn { from { scale: .2; rotate: -12deg; } }
+@keyframes allezShake { 50% { rotate: -3deg; scale: 1.05; } }
 .bubble span { font-size: 10px; font-weight: 800; letter-spacing: .08em; line-height: 1; margin-top: 1px; }
 .bubble.pop { animation: bubPop .25s ease-out forwards !important; pointer-events: none; }
 @keyframes bubIn { from { scale: .3; } }
@@ -203,6 +216,6 @@ button:focus-visible { outline: 2px solid var(--led-hand); outline-offset: 2px; 
   background: var(--led-finish); color: #12161f; }
 #pause { background: rgba(11,13,18,.88); justify-content: center; }
 #fatal { position: fixed; inset: 0; z-index: 9; display: grid; place-items: center; padding: var(--gut); text-align: center; background: var(--night); }
-@media (prefers-reduced-motion: reduce) { .card-in, #toast.show, #btnMain.hit, #btnRest.hit, .bubble { animation: none !important; } }
+@media (prefers-reduced-motion: reduce) { .card-in, #toast.show, #btnMain.hit, #btnRest.hit, .bubble, #warm.on { animation: none !important; } }
 
 #fade { position: fixed; inset: 0; z-index: 4; pointer-events: none; background: var(--night); opacity: 0; }

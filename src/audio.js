@@ -705,6 +705,53 @@ export class Sound {
     for (const s of [n.src, n.lfo, n.bias]) if (s) { try { s.stop(t + 0.05); } catch (e) { /* already stopped */ } }
     this.restNode = null;
   }
+  // "Allez!" from a friend below: a formant-filtered saw voice, two syllables (a-LEZ) with the
+  // stress and the pitch peak on the second, a short "z" of noise at the end. No samples.
+  allez(t = this.now()) {
+    const c = this.ctx; if (!c) return;
+    const T = (x) => t + x;
+    const out = c.createGain(); out.gain.value = 0.45; out.connect(this.sfx);
+    // pitch: a shout, rising into the stressed syllable
+    const voices = [0, 9].map((det) => {
+      const o = c.createOscillator(); o.type = 'sawtooth'; o.detune.value = det;
+      const f = o.frequency;
+      f.setValueAtTime(205, T(0)); f.linearRampToValueAtTime(228, T(0.12));
+      f.linearRampToValueAtTime(215, T(0.16)); f.linearRampToValueAtTime(300, T(0.26));
+      f.linearRampToValueAtTime(285, T(0.4)); f.linearRampToValueAtTime(230, T(0.52));
+      return o;
+    });
+    const vib = c.createOscillator(); vib.frequency.value = 6.5;
+    const vg = c.createGain(); vg.gain.value = 5; vib.connect(vg);
+    // vowel envelope: "a" (open), a quick "l" dip, "e" (stressed, long)
+    const amp = c.createGain(); const a = amp.gain;
+    a.setValueAtTime(0.0001, T(0)); a.exponentialRampToValueAtTime(0.5, T(0.03));
+    a.setValueAtTime(0.45, T(0.11)); a.exponentialRampToValueAtTime(0.12, T(0.15));
+    a.exponentialRampToValueAtTime(0.7, T(0.21)); a.setValueAtTime(0.62, T(0.4));
+    a.exponentialRampToValueAtTime(0.0001, T(0.54));
+    for (const o of voices) { vg.connect(o.frequency); o.connect(amp); }
+    // formants (F1, F2, F3) morph a → l → e
+    const F = [[760, 350, 470], [1250, 1050, 1950], [2600, 2500, 2650]], G = [1, 0.55, 0.22];
+    F.forEach((fs, i) => {
+      const bp = c.createBiquadFilter(); bp.type = 'bandpass'; bp.Q.value = i === 0 ? 7 : 9;
+      bp.frequency.setValueAtTime(fs[0], T(0)); bp.frequency.setValueAtTime(fs[0], T(0.11));
+      bp.frequency.linearRampToValueAtTime(fs[1], T(0.15)); bp.frequency.linearRampToValueAtTime(fs[2], T(0.21));
+      const g = c.createGain(); g.gain.value = G[i] * 0.55;
+      amp.connect(bp); bp.connect(g); g.connect(out);
+    });
+    for (const o of voices) { o.start(T(0)); o.stop(T(0.58)); }
+    vib.start(T(0)); vib.stop(T(0.58));
+    // breath on the attack and the final "z"
+    this.noise({ t: T(0), dur: 0.05, buf: 'white', type: 'bandpass', f: 1400, Q: 0.8, g: 0.05, dest: out });
+    this.noise({ t: T(0.44), dur: 0.1, buf: 'white', type: 'highpass', f: 4200, g: 0.06, a: 0.02, dest: out });
+  }
+  // allez tapped: a warm lift (major third up), the friend's energy
+  allezTap() {
+    if (!this.ctx) return;
+    const t = this.now();
+    this.tone({ t, f: mtof(76), dur: 0.22, g: 0.07, wave: 'triangle' });
+    this.tone({ t: t + 0.07, f: mtof(80), dur: 0.26, g: 0.07, wave: 'triangle' });
+    this.tone({ t: t + 0.14, f: mtof(83), dur: 0.4, g: 0.07, wave: 'triangle' });
+  }
   // bubbles: a soft rising blip when one appears, a pop when tapped
   bubble(kind) {
     if (!this.ctx) return;

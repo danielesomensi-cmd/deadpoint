@@ -18,7 +18,8 @@ const MEDIANS = {};
 
 export const PROFILES = {
   // rest: when to mash the rest button (only lit with a hand on a jug) and how fast (taps/s)
-  // bub: chance of going for a bubble at all, and the reaction time to reach it [mean, sd] (s)
+  // bub: chance of going for a bubble (chalk, jump, allez) at all, and the reaction time to reach it
+  // [mean, sd] (s); the bubble's own life decides whether the tap lands in time
   novice:     { sigma: 0.085, bias: 0.015, think: [0.8, 0.3],  rest: { below: 35, until: 75, tps: 5 }, bub: { p: 0.5, react: [1.0, 0.3] } },
   casual:     { sigma: 0.062, bias: 0.008, think: [0.6, 0.2],  rest: { below: 45, until: 85, tps: 6 }, bub: { p: 0.7, react: [0.8, 0.25] } },
   good:       { sigma: 0.045, bias: 0.0,   think: [0.45, 0.15], rest: { smart: true, tps: 7 }, bub: { p: 0.85, react: [0.65, 0.2] } },
